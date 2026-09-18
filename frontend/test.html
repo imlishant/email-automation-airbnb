@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>GatePass — checks</title>
+<!--
+  Runnable checks for the rules the product depends on: derived state, retention,
+  pagination, society resolution, template filling, send gating, automation,
+  guest scoping, and auth. No runner and no dependencies — open this file in a
+  browser, or serve the folder and load /test.html.
+
+  These cover data.js and the pure helpers in app.js. Rendering and layout are
+  still checked by hand; see docs/TESTING.md.
+-->
+<style>
+  body{font:14px/1.6 ui-monospace,monospace;margin:0;padding:24px;background:#fff;color:#111}
+  #out{white-space:pre-wrap}
+  .app,.toast{position:absolute;left:-9999px}
+</style></head>
+<body>
+<div class="app"><aside class="side"><button class="nav-btn" data-nav="bookings"></button>
+<button class="nav-btn" data-nav="settings"></button><div class="themerow" id="themerow"></div>
+<div class="host" id="hostchip"></div></aside><main class="main" id="main"></main></div>
+<div class="toast" id="toast"></div>
+<script src="js/config.js"></script><script src="js/data.js"></script><script src="js/app.js"></script>
+<script>
+const R=[]; const ok=(n,c,d="")=>R.push((c?"PASS":"FAIL")+" "+n+(c?"":"  <<< "+d));
+const tick=(ms=60)=>new Promise(r=>setTimeout(r,ms));
+(async()=>{
+ try{
+  // --- derived values, not stored ---
+  const b1=await Data.booking("bkg_1");
+  ok("adults derived from people",Derive.adults(b1)===3,Derive.adults(b1));
+  ok("nights derived from dates",Derive.nights(b1)===3,Derive.nights(b1));
+  ok("no stored status/adults/nights field",
+     !("status" in b1)&&!("adults" in b1)&&!("nights" in b1),Object.keys(b1).join(","));
+  ok("status awaiting",Derive.status(b1)==="awaiting",Derive.status(b1));
+
+  // --- date-only values parse as a LOCAL day, not UTC ---
+  const d=parseDay("2026-09-20");
+  ok("parseDay is local midnight",d.getDate()===20&&d.getHours()===0,d.toString());
+
+  // --- retention ---
+  const page=await Data.bookings({});
+  ok("past booking hidden by retention",!page.rows.some(r=>r.id==="bkg_5"),page.rows.map(r=>r.id).join(","));
+  ok("attention sorted first",Derive.needsAttention(page.rows[0]),Derive.status(page.rows[0]));
+  ok("counts returned",page.counts.attention===2&&page.counts.settled===2,JSON.stringify(page.counts));
+
+  // --- keyset pagination ---
+  const p1=await Data.bookings({limit:2});
+  ok("page 1 limited",p1.rows.length===2&&!!p1.nextCursor,p1.rows.length+"/"+p1.nextCursor);
+  const p2=await Data.bookings({limit:2,cursor:p1.nextCursor});
+  ok("page 2 continues, no overlap",
+     p2.rows.length===2&&!p2.rows.some(r=>p1.rows.find(x=>x.id===r.id)),
+     p1.rows.map(r=>r.id)+" then "+p2.rows.map(r=>r.id));
+
+  // --- listing filter ---
+  const f=await Data.bookings({listingId:"lst_2"});
+  ok("filter by listing",f.rows.every(r=>r.listingId==="lst_2")&&f.rows.length>0,f.rows.length);
+
+  // --- society resolved through the listing, never stored on the booking ---
+  ok("society via listing",b1.societyId==="soc_1"&&b1.society.name.includes("Greenwood"),b1.societyId);
+
+  // --- template filled from CONFIG.templateVars, all tokens consumed ---
+  const filled=fillTemplate(b1.society.template,{booking:b1,listing:{name:b1.listingName},society:b1.society,fmt});
+  ok("no placeholder left unfilled",!/\{\{\w+\}\}/.test(filled),(filled.match(/\{\{\w+\}\}/g)||[]).join(","));
+  ok("every CONFIG token is replaceable",
+     CONFIG.templateVars.every(v=>!fillTemplate("{{"+v.token+"}}",{booking:b1,listing:{name:"x"},society:b1.society,fmt}).includes("{{")),
+     "one token did not resolve");
+
+  // --- send is gated on completeness ---
+  let threw=false; try{await Data.send("bkg_1");}catch(e){threw=e.message==="incomplete";}
+  ok("send refused while IDs missing",threw);
+
+  // --- upload the missing IDs, chosen type is honoured ---
+  await Data.addDocument("bkg_1","per_2",{type:"Passport"});
+  const mid=await Data.booking("bkg_1");
+  ok("chosen doc type stored",mid.people.find(p=>p.id==="per_2").documentType==="Passport");
+  ok("upload logged",mid.activity[0].kind==="upload"&&mid.activity[0].text.includes("Passport"),mid.activity[0].text);
+  await Data.addDocument("bkg_1","per_3",{type:"Voter ID",by:"guest"});
+  const full=await Data.booking("bkg_1");
+  ok("now complete + ready",Derive.complete(full)&&Derive.status(full)==="ready",Derive.status(full));
+
+  // --- auto-send on completion (automation = allids) ---
+  await maybeAutoSend("bkg_1"); await tick(CONFIG.ui.autoSendDelayMs+80);
+  const sent=await Data.booking("bkg_1");
+  ok("auto-sent when all IDs in",!!sent.sentAt&&Derive.status(sent)==="sent",Derive.status(sent));
+  ok("auto-send logged as auto",sent.activity[0].text.includes("auto-sent"),sent.activity[0].text);
+
+  // --- 'before' automation must NOT auto-send on completion ---
+  await Data.addDocument("bkg_4","per_8",{type:"Aadhaar"});
+  await maybeAutoSend("bkg_4"); await tick(80);
+  const b4=await Data.booking("bkg_4");
+  ok("'before' mode does not auto-send",!b4.sentAt,String(b4.sentAt));
+
+  // --- adult count guard ---
+  await Data.setAdultCount("bkg_2",4);
+  let b2=await Data.booking("bkg_2");
+  ok("adults added",Derive.adults(b2)===4,Derive.adults(b2));
+  await Data.setAdultCount("bkg_2",1);
+  b2=await Data.booking("bkg_2");
+  ok("refuses to drop lead or uploaded IDs",Derive.adults(b2)===2,Derive.adults(b2));
+
+  // --- guest scope: one booking, no desk, no template ---
+  const g=await Data.guestBooking("bkg_2");
+  ok("guest sees the booking",!!g&&g.id==="bkg_2");
+  ok("guest gets no desk email or template",!("society" in g)&&!("template" in g),Object.keys(g).join(","));
+  const expired=await Data.guestBooking("bkg_5");
+  ok("expired guest link refused",expired===null,String(expired));
+  ok("unknown token refused",(await Data.guestBooking("nope"))===null);
+
+  // --- auth ---
+  ok("first-run passcode unlocks",(await Data.unlock(CONFIG.auth.firstRunPasscode)).ok);
+  await Data.setPasscode("1357");
+  ok("old passcode refused after change",!(await Data.unlock(CONFIG.auth.firstRunPasscode)).ok);
+  ok("new passcode accepted",(await Data.unlock("1357")).ok);
+
+  // --- helpers ---
+  ok("initials handles one word / empty",initials("Priya")==="P"&&initials("")==="?"&&initials("  a  b c ")==="AB",
+     initials("Priya")+"|"+initials("")+"|"+initials("  a  b c "));
+  ok("esc handles null and angle brackets",esc(null)===""&&esc("<b>&")==="&lt;b&gt;&amp;",esc("<b>&"));
+  ok("no MONTHS/day-name tables left",typeof MONTHS==="undefined");
+ }catch(e){ok("harness ran to completion",false,e.stack||e.message);}
+ const pass=R.filter(r=>r.startsWith("PASS")).length;
+ const p=document.createElement("pre");p.id="out";
+ p.innerHTML="TESTS\n"+R.map(r=>r.startsWith("PASS")
+   ?'<span style="color:#1a7f4b">'+r+"</span>"
+   :'<b style="color:#b3261e">'+r+"</b>").join("\n")
+   +"\n\n"+pass+"/"+R.length+" passed"+(pass===R.length?"":"  \u2014 SOMETHING IS BROKEN")+"\nEND";
+ document.title=pass+"/"+R.length+" passed";
+ document.body.appendChild(p);
+})();
+</script>
+
+</body></html>

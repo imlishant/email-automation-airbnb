@@ -2,9 +2,13 @@
 
 Working prototype. Plain HTML, CSS and JS — no build step, no framework.
 
-- `index.html` — markup and the two font links
+- `index.html` — shell markup, the two font links, and the pre-paint theme script
 - `css/styles.css` — all styles, themed with CSS variables (light/dark aware)
-- `js/app.js` — all behaviour and the mock data
+- `js/config.js` — every tunable the product owns. No data.
+- `js/data.js` — the data boundary: `Derive` (the rules), `fillTemplate`, the
+  async `Data` API, and `SEED`, the only mock values in the app
+- `js/app.js` — rendering and behaviour. No data, no tunables, no literals
+- `test.html` — runnable checks. Open it; the title shows the score
 
 ## Run
 
@@ -17,11 +21,18 @@ python3 -m http.server 5173
 
 ## Notes
 
-- All data is mock data inside `app.js`. There is no server yet.
+- All mock data lives in `SEED` in `data.js`, and nowhere else. There is no
+  server yet.
+- Every `Data` function is already `async` and shaped like the planned API, so
+  connecting the backend means replacing those function bodies with `fetch` and
+  deleting `SEED` — no screen changes. See `../docs/TECH_STACK.md`.
 - Admin passcode starts at 0000 (Settings → Admin access to change).
-- Guest page: open a booking → "Preview guest page". A real guest reaches it by
-  the booking's own link and sees only that booking.
-- When the backend exists, replace the mock data and the `toast()`-only actions
-  with real API calls (see ../backend/README.md for the endpoints).
+- Guest page: open a booking → "Open the guest link" (or paste the copied
+  link). That is the same link a real guest gets, and it shows only that
+  booking.
+- Appearance: Light / Match system / Dark, in the sidebar, on the lock screen,
+  and on the guest page. Stored in `localStorage["gatepass.theme"]` and
+  re-applied by a small script in `index.html`'s `<head>` before first paint.
+- Before committing, open `test.html` and confirm every line reads PASS.
 - If the single `app.js` grows large, that is the signal to move to a framework.
   Not needed yet.

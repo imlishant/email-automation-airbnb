@@ -87,6 +87,26 @@ Per booking, one of:
 The admin can also send manually. Send is locked until all adult IDs are in;
 automation handles the timing otherwise.
 
+## Appearance
+
+- The admin and guest UIs follow the device's light/dark setting by default, and
+  either can be overridden with a three-state control: **Light / Match system /
+  Dark**. "Match system" is the default and stores nothing.
+- The choice is remembered per device, not per account — there are no accounts,
+  and the right theme is a property of the screen you are holding, not of the
+  host.
+- The guest page carries the control too. It is not a step in the flow and costs
+  no taps, and a guest reading a dark page in sunlight at a gate has a real
+  problem.
+
+## Reaching the guest page
+
+- There is exactly **one** way to open the guest page: the booking's own guest
+  link. The admin can copy it or open it.
+- An earlier "Preview guest page" button was removed. A second route to the same
+  screen only invites the two to drift, and previewing a link is the same act as
+  opening it.
+
 ## Retention
 
 - A booking is **hidden** from the admin list 24 hours after checkout.
@@ -103,6 +123,28 @@ automation handles the timing otherwise.
   chronological order by check-in (nearest first).
 - Ready and already-sent bookings below.
 
+## Data, not code
+
+- The frontend holds **no hardcoded values**. Anything the host owns is data and
+  comes from the data layer (`frontend/js/data.js`); anything the product owns is
+  a knob in `frontend/js/config.js`. No screen carries its own copy of a
+  retention window, a document type, a placeholder name or a date format.
+- Derived values are never stored: a booking's status, its adult count and its
+  night count are all computed from the facts, in one place.
+- The data layer is **async today**, before there is a server to be async
+  about, so that connecting the real API changes one file and no screen.
+
+## Backend stack (settled)
+
+Node 22 + Fastify + SQLite (WAL, via `better-sqlite3`) + Drizzle, with an
+in-process job table instead of a queue, files on local disk then
+S3-compatible storage, and one small VPS. The reasoning, the rejected
+alternatives and the triggers to revisit each choice are in `TECH_STACK.md`.
+
+The short version: there is **one writer**, the whole database will be
+megabytes, and the retention rule already bounds the working set — so the
+scarce resource is operational surface, not throughput.
+
 ## Open decisions
 
 - Retention window for booking records after checkout.
@@ -110,4 +152,5 @@ automation handles the timing otherwise.
 - Whether the guest link should also carry a light second check (for example
   last 4 digits of the guest's phone). Currently: link only.
 - Whether there is one un-lockable owner, separate from other admins.
-- Backend stack (see backend/README.md for the proposal).
+- Whether ID files are sent as attachments or as short-lived signed links, if
+  attachment limits or deliverability force the question (`TECH_STACK.md`, 9).

@@ -15,14 +15,26 @@ Phases in build order. Check items off as they land.
 - [x] Auto-remove bookings 24h after checkout (list hide)
 - [x] Automation choice: 1h before check-in / when all IDs collected
 - [x] Settings: Listings, Societies & templates, Admin access
+- [x] Light / Match system / Dark appearance control, remembered per device
+- [x] Layout verified 320px → 1600px on every screen, no sideways scroll
 
 ## Phase 1 — Backend foundations
 
-- [ ] Choose stack (see backend/README.md)
-- [ ] Data store and schema for societies, listings, bookings, people, documents
-- [ ] Admin passcode auth (verify, change, attempt lockout)
-- [ ] CRUD: societies (desk email + template), listings (with society)
-- [ ] Wire the frontend Settings screens to real endpoints
+Stack is settled — see `TECH_STACK.md`. Nothing here re-opens it.
+
+- [x] Choose stack: Node 22 + Fastify + SQLite (WAL) + Drizzle
+- [ ] Fastify skeleton with JSON Schema on every route, security headers, health check
+- [ ] Schema + forward-only numbered `.sql` migrations, with the indexes listed
+      in `TECH_STACK.md` §5
+- [ ] Port `Derive` (status, adults, nights, retention) to the server as the
+      single implementation, and share the file with the frontend
+- [ ] Admin passcode auth: slow hash, constant-time compare, attempt lockout,
+      HTTP-only `SameSite=Lax` session cookie
+- [ ] CRUD: societies (desk email + template), listings (with society + iCal URL)
+- [ ] `GET /bookings` with keyset pagination and an `ETag`
+- [ ] Wire the frontend Settings screens to real endpoints — replace the bodies
+      in `data.js` with `fetch`, delete `SEED`, change no screen
+- [ ] CI: migrate, run `node:test` + the browser checks, enforce the JS/CSS budgets
 
 ## Phase 2 — Airbnb calendar sync
 
@@ -34,9 +46,10 @@ Phases in build order. Check items off as they land.
 
 ## Phase 3 — Guest upload
 
-- [ ] Generate a signed, unguessable token per booking
+- [ ] Generate a signed, unguessable token per booking (>=128 bits from a CSPRNG)
 - [ ] Guest page served from the token; scoped to one booking
-- [ ] File upload with type/size checks; store encrypted at rest
+- [ ] Streamed upload with magic-byte type checks and a size cap; encrypted at
+      rest; EXIF stripped; images resized before storage
 - [ ] Guest can set adult count and add visitor rows
 - [ ] Token expires at checkout + 24h
 
@@ -54,6 +67,10 @@ Phases in build order. Check items off as they land.
 
 - [ ] Hide bookings 24h after checkout (list rule already in UI)
 - [ ] Retention window for records; scheduled delete of ID files
-- [ ] Passcode brute-force lockout
 - [ ] Audit log of admin actions
-- [ ] Split the single-page frontend into a framework if it grows
+- [ ] SSE live updates, replacing any polling
+- [ ] Litestream replication of the SQLite file to object storage, and a
+      restore rehearsal — a backup that has never been restored is a guess
+- [ ] Load test at 100x current data to check the budgets in `TECH_STACK.md` §4
+- [ ] Adopt Preact + htm **only** if `app.js` passes ~1,500 lines or two screens
+      need the same stateful widget
