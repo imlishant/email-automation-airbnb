@@ -4,3 +4,13 @@ node_modules/
 uploads/
 .DS_Store
 dist/
+backend/data/
+*.db-shm
+*.db-wal
+# Secrets: .env.example is the ONLY env file that may be committed.
+.env.*
+!.env.example
+*.pem
+*.key
+# Local databases and anything uploaded
+*.db-journal

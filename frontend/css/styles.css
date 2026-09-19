@@ -192,6 +192,8 @@
   .btn.primary:hover{background:var(--accent-ink)}
   .btn.primary:disabled{background:var(--line-strong);border-color:var(--line-strong);color:var(--faint);cursor:not-allowed}
   .btn.wa{background:var(--wa);border-color:var(--wa);color:#fff}
+  .btn.danger{color:var(--red);border-color:var(--red-soft)}
+  .btn.danger:hover{background:var(--red-soft);border-color:var(--red)}
   .btn.wa:hover{filter:brightness(.94)}
   .btn.sm{padding:6px 10px;font-size:12.5px}
   .btn.lg{padding:11px 20px;font-size:14px}
@@ -239,6 +241,30 @@
            background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:12px 20px;display:inline-block}
   .pinput{max-width:190px;letter-spacing:8px;font-size:19px;font-weight:700}
   .docsel{width:auto;max-width:124px;flex:none;padding:7px 9px;font-size:12.5px}
+  .warnbar{display:flex;align-items:flex-start;gap:11px;background:var(--amber-soft);border:1px solid var(--amber);
+           border-radius:var(--radius-sm);padding:12px 15px;margin-bottom:20px;font-size:13px;color:var(--ink)}
+  .warnbar svg{width:18px;height:18px;stroke:var(--amber);flex:none;margin-top:1px}
+  .warnbar b{font-weight:600}
+  .grow .gtick{flex:none}
+  /* A name that looks like text until you touch it. Every name in this system
+     was typed by a human, so editing has to be the obvious thing to do. */
+  .nameinput{font:inherit;font-weight:600;font-size:14.5px;color:var(--ink);background:none;border:1px solid transparent;
+             border-radius:7px;padding:2px 6px;margin:-2px -6px;max-width:100%;width:15ch;transition:border-color .15s,background .15s}
+  .nameinput:hover{border-color:var(--line);background:var(--surface-2)}
+  .nameinput:focus{border-color:var(--accent);background:var(--surface);outline:none;box-shadow:0 0 0 3px var(--accent-soft)}
+  .nameinput.unnamed::placeholder{color:var(--amber);opacity:1;font-weight:500}
+  .nameinput.unnamed{border-color:var(--amber-soft);border-style:dashed}
+  .filepick{position:absolute;width:0;height:0;opacity:0;pointer-events:none}
+  .nm-text{font-weight:600}
+  .note.nudge{color:var(--amber)}
+  .stepper.party{border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px 15px;margin:4px 0 16px;gap:14px}
+  .stepper.party .desc{color:var(--muted);font-size:12.5px;margin-top:2px;font-weight:400}
+  .grow .nameinput{width:100%;min-width:0}
+  .grow .gi{min-width:112px}
+  .grow .gs .you{color:var(--accent-ink);font-weight:600}
+  .timerow{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px}
+  .timerow .field{margin-bottom:0}
+  .timerow .input{width:auto;min-width:118px}
   .input,textarea.input,select.input{width:100%;font-family:inherit;font-size:14px;color:var(--ink);background:var(--surface);border:1px solid var(--line-strong);border-radius:9px;padding:10px 12px}
   textarea.input{resize:vertical;line-height:1.6;min-height:150px}
   .var{display:inline-block;font-family:ui-monospace,monospace;font-size:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:2px 7px;margin:0 2px 4px 0;color:var(--accent-ink)}

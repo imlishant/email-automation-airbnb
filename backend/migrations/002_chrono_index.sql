@@ -1,0 +1,11 @@
+-- 002 — the index the list's ORDER BY and the keyset cursor both need.
+--
+-- 001 gave bookings_list (check_out, check_in, id), which serves the retention
+-- filter. It cannot also satisfy ORDER BY check_in, because a range scan on the
+-- leading column leaves the second column unordered — EXPLAIN showed
+-- "USE TEMP B-TREE FOR ORDER BY".
+--
+-- At this data volume that sort is free, but keyset pagination pages on
+-- (check_in, id) (docs/TECH_STACK.md §5) and needs a real ordered index to stay
+-- flat as pages go deeper. One index serves both.
+CREATE INDEX bookings_chrono ON bookings(check_in, id);

@@ -1,7 +1,109 @@
-# Backend (not built yet)
+# Backend
 
-This is the plan. No server code exists yet. The point of this file is that we
-can start building without re-deciding the shape.
+**Phase 1a is built: the calendar reader.** Everything else is still the plan.
+
+## Try your own listing right now
+
+```bash
+cd backend
+npm run probe -- "https://www.airbnb.co.in/calendar/ical/XXXXX.ics?s=YYYY"
+```
+
+Get that link from Airbnb: **your listing → Availability → Connect calendars →
+Export calendar**. The probe fetches it, reads it, and tells you what it can
+actually see — reservations, blocked dates, booking codes, overlaps, and
+anything it could not make sense of. No server, no database, no account needed.
+
+```bash
+npm test                                          # 12 checks, no dependencies
+npm run probe -- ./test/fixtures/airbnb-messy.ics  # what a bad feed looks like
+npm run probe -- <url> --json                      # machine-readable
+```
+
+Source: `src/ical/parse.js` (the reader), `src/ical/fetch.js` (bounded
+fetching), `src/ical/connect.js` (the one report the API will also return),
+`src/ical/probe.js` (the CLI).
+
+**What the feed gives:** dates, a stable UID, usually a booking code, sometimes
+the guest's phone last 4 digits. **What it does not give:** the guest's name or
+the headcount. That absence is why the guest link exists at all, and the code
+never invents either.
+
+## Run the server
+
+```bash
+npm start           # http://localhost:8080
+npm run dev         # same, restarting on change
+curl localhost:8080/healthz
+```
+
+Migrations run on boot, so there is no separate step. In development it uses
+`file:./data/gatepass.db` and creates the folder.
+
+**It refuses to start on an unsafe configuration.** In production that means no
+`SESSION_SECRET`, no `JOBS_TICK_SECRET`, a plain-http `APP_BASE_URL` (guest
+tokens travel in the URL), or an admin passcode that is not properly hashed.
+Better a failed deploy than a server quietly accepting anything.
+
+`src/http/config.js` is the only place the environment is read, and it is
+validated once at boot.
+
+## Sending mail
+
+`src/mail/transport.js` is the boundary. Until Phase 4 configures SMTP there is
+**no transport**, and `POST /api/bookings/:id/send` returns **503** rather than
+marking the booking sent.
+
+That is deliberate and worth not "fixing": `sent_at` is written only after a
+transport reports success. A booking that reads "Sent" while nothing reached the
+security desk would stop the host chasing it, and the guest would be held at the
+gate. A refusal is visible; a false success is not.
+
+`MAIL_TRANSPORT=recording` records messages instead of sending them, for tests
+and local work. It is **fatal at boot in production**.
+
+## Database
+
+```bash
+npm run migrate              # apply pending migrations + first-run rows
+npm run migrate -- --status  # what is applied, without changing anything
+```
+
+Safe on every boot: applying twice is a no-op. With no `DATABASE_URL` it uses
+`file:./data/gatepass.db` and creates the folder; in production the same code
+talks to Turso by env var alone.
+
+- `migrations/*.sql` — forward-only, numbered. **An applied file is never
+  edited**; add the next number. Each runs in one transaction.
+- `src/db/client.js` — the connection, the pragmas that matter (foreign keys are
+  OFF in SQLite by default, which would make every `REFERENCES` decorative),
+  and `transaction()`.
+- `src/db/migrate.js` — the migrator and the first-run seed.
+
+**The schema enforces the decisions rather than trusting us to remember them:**
+one booking code, one lead guest per booking, one ID per adult, one live guest
+link, `check_out >= check_in`, enum CHECKs, and a partial unique index that makes
+a second automated send impossible. `bookings` deliberately has **no**
+`status`, `adults`, `nights` or `society_id` column — all four are derived in
+`shared/rules.js`, and a test asserts they are absent.
+
+## Admin access
+
+`src/auth/passcode.js` hashes; `src/auth/admin.js` owns the unlock flow. No
+dependency — `scrypt` is in `node:crypto`.
+
+`npm run migrate` hashes `ADMIN_FIRST_RUN_PASSCODE` (default `0000`) properly on
+the first run and **exits non-zero** if it is unusable, so nothing can be
+deployed sitting on a placeholder. It warns if `NODE_ENV=production` while the
+passcode is still the default.
+
+**Read the note at the top of `passcode.js` before trusting the hash.** A
+4-digit code is 10,000 possibilities; the KDF protects a leaked database, but
+the **attempt lockout** is what protects the passcode. Past the threshold every
+wrong attempt re-locks, doubling per tier. Still owed: IP rate limiting at the
+HTTP layer.
+
+## The rest of the plan
 
 ## Stack (settled)
 

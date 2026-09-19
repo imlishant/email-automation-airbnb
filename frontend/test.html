@@ -2,132 +2,166 @@
 <html lang="en"><head><meta charset="utf-8">
 <title>GatePass — checks</title>
 <!--
-  Runnable checks for the rules the product depends on: derived state, retention,
-  pagination, society resolution, template filling, send gating, automation,
-  guest scoping, and auth. No runner and no dependencies — open this file in a
-  browser, or serve the folder and load /test.html.
+  Browser checks. These run against the REAL server, because the mock data layer
+  is gone — data.js is fetch calls now.
 
-  These cover data.js and the pure helpers in app.js. Rendering and layout are
-  still checked by hand; see docs/TESTING.md.
+  What they cover is precisely what the server suite cannot: that each screen
+  actually mounts and renders. Two bugs reached the user through that gap (a
+  missing listingRow, and the Societies tab), so it is worth its own file.
+
+  Run:  npm start  (in backend/), then open /frontend/test.html
 -->
 <style>
   body{font:14px/1.6 ui-monospace,monospace;margin:0;padding:24px;background:#fff;color:#111}
   #out{white-space:pre-wrap}
-  .app,.toast{position:absolute;left:-9999px}
+  .stage{position:absolute;left:-10000px;top:0;width:1000px}
 </style></head>
 <body>
-<div class="app"><aside class="side"><button class="nav-btn" data-nav="bookings"></button>
-<button class="nav-btn" data-nav="settings"></button><div class="themerow" id="themerow"></div>
-<div class="host" id="hostchip"></div></aside><main class="main" id="main"></main></div>
-<div class="toast" id="toast"></div>
-<script src="js/config.js"></script><script src="js/data.js"></script><script src="js/app.js"></script>
-<script>
-const R=[]; const ok=(n,c,d="")=>R.push((c?"PASS":"FAIL")+" "+n+(c?"":"  <<< "+d));
-const tick=(ms=60)=>new Promise(r=>setTimeout(r,ms));
-(async()=>{
- try{
-  // --- derived values, not stored ---
-  const b1=await Data.booking("bkg_1");
-  ok("adults derived from people",Derive.adults(b1)===3,Derive.adults(b1));
-  ok("nights derived from dates",Derive.nights(b1)===3,Derive.nights(b1));
-  ok("no stored status/adults/nights field",
-     !("status" in b1)&&!("adults" in b1)&&!("nights" in b1),Object.keys(b1).join(","));
-  ok("status awaiting",Derive.status(b1)==="awaiting",Derive.status(b1));
+<div id="out">running…</div>
+<!-- The real app shell. app.js captures #main at import, so this must exist
+     before the module runs — module scripts are deferred, so it does. -->
+<div class="stage" id="stage">
+  <div class="app">
+    <aside class="side">
+      <button class="nav-btn" data-nav="bookings"><span class="lbl">Bookings</span></button>
+      <button class="nav-btn" data-nav="settings"><span class="lbl">Settings</span></button>
+      <div class="side-foot"><div class="themerow" id="themerow"></div><div class="host" id="hostchip"></div></div>
+    </aside>
+    <main class="main" id="main"></main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <div class="backdrop" id="backdrop"><div class="modal" id="modal"></div></div>
+</div>
+<script type="module">
+import { CONFIG, Data, Derive, RULES, view, render, mountApp, showGuest, esc, initials, __setUnlocked } from "./js/app.js";
+import { fillTemplate, daysBetween, parseDay, toDay, addDays } from "../shared/rules.js";
 
-  // --- date-only values parse as a LOCAL day, not UTC ---
-  const d=parseDay("2026-09-20");
-  ok("parseDay is local midnight",d.getDate()===20&&d.getHours()===0,d.toString());
+const R = [];
+const ok = (n, c, d = "") => R.push((c ? "PASS " : "FAIL ") + n + (c ? "" : "   <<< " + d));
+const $ = (s) => document.querySelector(s);
+const tick = (ms = 120) => new Promise((r) => setTimeout(r, ms));
 
-  // --- retention ---
-  const page=await Data.bookings({});
-  ok("past booking hidden by retention",!page.rows.some(r=>r.id==="bkg_5"),page.rows.map(r=>r.id).join(","));
-  ok("attention sorted first",Derive.needsAttention(page.rows[0]),Derive.status(page.rows[0]));
-  ok("counts returned",page.counts.attention===2&&page.counts.settled===2,JSON.stringify(page.counts));
+const errors = [];
+addEventListener("error", (e) => errors.push(e.message));
+addEventListener("unhandledrejection", (e) => errors.push("reject: " + (e.reason?.message || e.reason)));
 
-  // --- keyset pagination ---
-  const p1=await Data.bookings({limit:2});
-  ok("page 1 limited",p1.rows.length===2&&!!p1.nextCursor,p1.rows.length+"/"+p1.nextCursor);
-  const p2=await Data.bookings({limit:2,cursor:p1.nextCursor});
-  ok("page 2 continues, no overlap",
-     p2.rows.length===2&&!p2.rows.some(r=>p1.rows.find(x=>x.id===r.id)),
-     p1.rows.map(r=>r.id)+" then "+p2.rows.map(r=>r.id));
+/** Render a screen into the real #main and report what came out. */
+async function screen(setup) {
+  errors.length = 0;
+  setup();
+  await render();
+  await tick();
+  return { html: $("#main").innerHTML, errors: [...errors] };
+}
 
-  // --- listing filter ---
-  const f=await Data.bookings({listingId:"lst_2"});
-  ok("filter by listing",f.rows.every(r=>r.listingId==="lst_2")&&f.rows.length>0,f.rows.length);
+(async () => {
+try {
+  // --- the server has to be there ---------------------------------------
+  const health = await fetch("/healthz").then((r) => r.json()).catch(() => null);
+  ok("the server is up and the database is reachable", health?.ok === true,
+     "start it with: cd backend && npm start");
+  if (!health?.ok) throw new Error("no server — the rest cannot run");
 
-  // --- society resolved through the listing, never stored on the booking ---
-  ok("society via listing",b1.societyId==="soc_1"&&b1.society.name.includes("Greenwood"),b1.societyId);
+  // --- session ----------------------------------------------------------
+  await Data.lock();
+  ok("a fresh browser has no admin session", (await Data.session()).admin === false);
+  ok("a wrong passcode is refused", (await Data.unlock("9999")).ok === false);
+  const unlocked = await Data.unlock("0000");
+  ok("the right passcode unlocks", unlocked.ok === true, JSON.stringify(unlocked));
+  ok("and the session is now real", (await Data.session()).admin === true);
+  ok("the passcode is never readable from the client",
+     (await Data.passcode()).value === null, "the server only stores a hash");
+  __setUnlocked(true);
 
-  // --- template filled from CONFIG.templateVars, all tokens consumed ---
-  const filled=fillTemplate(b1.society.template,{booking:b1,listing:{name:b1.listingName},society:b1.society,fmt});
-  ok("no placeholder left unfilled",!/\{\{\w+\}\}/.test(filled),(filled.match(/\{\{\w+\}\}/g)||[]).join(","));
-  ok("every CONFIG token is replaceable",
-     CONFIG.templateVars.every(v=>!fillTemplate("{{"+v.token+"}}",{booking:b1,listing:{name:"x"},society:b1.society,fmt}).includes("{{")),
-     "one token did not resolve");
+  // --- fixtures via the real API ----------------------------------------
+  for (const l of await Data.listings()) await Data.deleteListing(l.id);
+  let societies = await Data.societies();
+  if (!societies.length) {
+    ok("a society could not be created", false, "no society and none seeded");
+  }
+  const socId = societies[0]?.id;
+  const added = socId ? await Data.addListing({
+    name: "Check Flat", icalUrl: "https://www.airbnb.co.in/calendar/ical/999.ics?s=z", societyId: socId,
+  }) : { ok: false };
+  ok("a listing can be created through the API", added.ok, JSON.stringify(added));
 
-  // --- send is gated on completeness ---
-  let threw=false; try{await Data.send("bkg_1");}catch(e){threw=e.message==="incomplete";}
-  ok("send refused while IDs missing",threw);
+  // --- SCREENS: the gap the server suite cannot cover --------------------
+  await mountApp();
+  await tick(200);
 
-  // --- upload the missing IDs, chosen type is honoured ---
-  await Data.addDocument("bkg_1","per_2",{type:"Passport"});
-  const mid=await Data.booking("bkg_1");
-  ok("chosen doc type stored",mid.people.find(p=>p.id==="per_2").documentType==="Passport");
-  ok("upload logged",mid.activity[0].kind==="upload"&&mid.activity[0].text.includes("Passport"),mid.activity[0].text);
-  await Data.addDocument("bkg_1","per_3",{type:"Voter ID",by:"guest"});
-  const full=await Data.booking("bkg_1");
-  ok("now complete + ready",Derive.complete(full)&&Derive.status(full)==="ready",Derive.status(full));
+  const list = await screen(() => { view.screen = "bookings"; view.listingId = null; });
+  ok("the bookings screen renders without error", list.errors.length === 0, list.errors.join(" | "));
+  ok("...and shows its heading and sync line",
+     list.html.includes("Bookings") && list.html.includes("Auto-syncing"), list.html.slice(0, 120));
 
-  // --- auto-send on completion (automation = allids) ---
-  await maybeAutoSend("bkg_1"); await tick(CONFIG.ui.autoSendDelayMs+80);
-  const sent=await Data.booking("bkg_1");
-  ok("auto-sent when all IDs in",!!sent.sentAt&&Derive.status(sent)==="sent",Derive.status(sent));
-  ok("auto-send logged as auto",sent.activity[0].text.includes("auto-sent"),sent.activity[0].text);
+  for (const tab of ["listings", "societies", "access"]) {
+    const s = await screen(() => { view.screen = "settings"; view.tab = tab; });
+    ok(`the settings/${tab} tab renders`, s.errors.length === 0, s.errors.join(" | "));
+    ok(`...and is not empty`, ($("#sbody")?.innerHTML.length || 0) > 50,
+       `sbody length ${$("#sbody")?.innerHTML.length}`);
+  }
+  // The Societies tab specifically: it shipped broken once, from a stale
+  // CONFIG.templateVars reference that threw during render.
+  const soc = await screen(() => { view.screen = "settings"; view.tab = "societies"; });
+  ok("the societies tab lists its societies", $("#sbody").querySelectorAll(".soc").length > 0,
+     "no .soc cards rendered");
+  ok("...and offers every template placeholder",
+     RULES && $("#sbody").innerHTML.includes("{{listing}}"), "placeholder chips missing");
 
-  // --- 'before' automation must NOT auto-send on completion ---
-  await Data.addDocument("bkg_4","per_8",{type:"Aadhaar"});
-  await maybeAutoSend("bkg_4"); await tick(80);
-  const b4=await Data.booking("bkg_4");
-  ok("'before' mode does not auto-send",!b4.sentAt,String(b4.sentAt));
+  const lst = await screen(() => { view.screen = "settings"; view.tab = "listings"; });
+  ok("the listings tab shows the listing we created",
+     lst.html.includes("Check Flat"), "the new listing is not on screen");
+  ok("...and the check-in/check-out times", lst.html.includes("Check-in &amp; check-out times"));
 
-  // --- adult count guard ---
-  await Data.setAdultCount("bkg_2",4);
-  let b2=await Data.booking("bkg_2");
-  ok("adults added",Derive.adults(b2)===4,Derive.adults(b2));
-  await Data.setAdultCount("bkg_2",1);
-  b2=await Data.booking("bkg_2");
-  ok("refuses to drop lead or uploaded IDs",Derive.adults(b2)===2,Derive.adults(b2));
+  // --- a booking detail, if there is one --------------------------------
+  const page = await Data.bookings({});
+  ok("the bookings list comes back with the host's times",
+     typeof page.times?.checkOutTime === "string", JSON.stringify(page.times));
+  if (page.rows.length) {
+    const b = page.rows[0];
+    const detail = await screen(() => { view.screen = "detail"; view.bookingId = b.id; });
+    ok("a booking detail renders", detail.errors.length === 0, detail.errors.join(" | "));
+    ok("...and the guest link is a real token URL",
+       detail.html.includes("Copy guest upload link"), "no share controls");
+  } else {
+    ok("booking detail (skipped: no bookings synced yet)", true);
+  }
 
-  // --- guest scope: one booking, no desk, no template ---
-  const g=await Data.guestBooking("bkg_2");
-  ok("guest sees the booking",!!g&&g.id==="bkg_2");
-  ok("guest gets no desk email or template",!("society" in g)&&!("template" in g),Object.keys(g).join(","));
-  const expired=await Data.guestBooking("bkg_5");
-  ok("expired guest link refused",expired===null,String(expired));
-  ok("unknown token refused",(await Data.guestBooking("nope"))===null);
+  // --- the guest surface -------------------------------------------------
+  const bad = await Data.guestBooking("forged.token");
+  ok("a forged guest token gets nothing", bad === null, JSON.stringify(bad));
+  errors.length = 0;
+  await showGuest("forged.token");
+  await tick();
+  ok("...and the guest page says so rather than breaking",
+     document.body.innerHTML.includes("Link not active") && errors.length === 0, errors.join(" | "));
+  document.getElementById("guestScreen")?.remove();
 
-  // --- auth ---
-  ok("first-run passcode unlocks",(await Data.unlock(CONFIG.auth.firstRunPasscode)).ok);
-  await Data.setPasscode("1357");
-  ok("old passcode refused after change",!(await Data.unlock(CONFIG.auth.firstRunPasscode)).ok);
-  ok("new passcode accepted",(await Data.unlock("1357")).ok);
+  // --- the shared rules are the same module both sides use ---------------
+  ok("retention is one instant, from shared/rules.js",
+     RULES.hideBookingAfterCheckoutHours === RULES.purgeRecordAfterCheckoutHours);
+  ok("calendar maths is the server's own", daysBetween("2026-09-20", "2026-09-23") === 3);
+  ok("dates stay on their local day", parseDay("2026-09-20").getDate() === 20);
+  ok("placeholder names are recognised",
+     Derive.isPlaceholderName("Adult 3") && !Derive.isPlaceholderName("Priya Menon"));
+  ok("templates fill with no placeholder left",
+     !/\{\{\w+\}\}/.test(fillTemplate("{{listing}} {{booking_id}} {{adult_count}}",
+       { listingName: "X", code: "HM1", people: [{}] }, (d) => d)));
+  ok("helpers survive odd input",
+     initials("") === "?" && initials("Priya") === "P" && esc(null) === "" && esc("<b>") === "&lt;b&gt;");
 
-  // --- helpers ---
-  ok("initials handles one word / empty",initials("Priya")==="P"&&initials("")==="?"&&initials("  a  b c ")==="AB",
-     initials("Priya")+"|"+initials("")+"|"+initials("  a  b c "));
-  ok("esc handles null and angle brackets",esc(null)===""&&esc("<b>&")==="&lt;b&gt;&amp;",esc("<b>&"));
-  ok("no MONTHS/day-name tables left",typeof MONTHS==="undefined");
- }catch(e){ok("harness ran to completion",false,e.stack||e.message);}
- const pass=R.filter(r=>r.startsWith("PASS")).length;
- const p=document.createElement("pre");p.id="out";
- p.innerHTML="TESTS\n"+R.map(r=>r.startsWith("PASS")
-   ?'<span style="color:#1a7f4b">'+r+"</span>"
-   :'<b style="color:#b3261e">'+r+"</b>").join("\n")
-   +"\n\n"+pass+"/"+R.length+" passed"+(pass===R.length?"":"  \u2014 SOMETHING IS BROKEN")+"\nEND";
- document.title=pass+"/"+R.length+" passed";
- document.body.appendChild(p);
+  // --- tidy up -----------------------------------------------------------
+  if (added.ok) await Data.deleteListing(added.listing.id);
+} catch (e) {
+  ok("the checks ran to completion", false, e.stack || e.message);
+}
+
+const pass = R.filter((r) => r.startsWith("PASS")).length;
+$("#out").innerHTML = R.map((r) => r.startsWith("PASS")
+  ? `<span style="color:#1a7f4b">${r}</span>`
+  : `<b style="color:#b3261e">${r}</b>`).join("\n")
+  + `\n\n${pass}/${R.length} passed` + (pass === R.length ? "" : "   — SOMETHING IS BROKEN");
+document.title = `${pass}/${R.length} passed`;
 })();
 </script>
-
 </body></html>

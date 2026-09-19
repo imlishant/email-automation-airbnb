@@ -14,6 +14,8 @@ gatepass/
 ├── README.md            You are here. Project overview and how to run.
 ├── CLAUDE.md            Orientation for contributors and coding agents.
 ├── CHANGELOG.md         What changed, per release.
+├── shared/
+│   └── rules.js         THE RULES, imported by the frontend AND the server.
 ├── docs/                The written record. Start with CONTEXT.md.
 │   ├── CONTEXT.md            Why this exists, who it serves, the constraints.
 │   ├── DECISIONS.md          Every product decision made so far. Source of truth.
@@ -31,12 +33,14 @@ gatepass/
 ├── frontend/            The admin + guest UI (working prototype).
 │   ├── index.html
 │   ├── css/styles.css
-│   ├── js/config.js          Tunables the product owns.
+│   ├── js/config.js          Presentation knobs. No data, no rules.
 │   ├── js/data.js            The data boundary + the only mock values.
 │   ├── js/app.js             Rendering only.
-│   ├── test.html             Runnable checks — open it in a browser.
+│   ├── test.html             Runnable checks — serve and open.
 │   └── README.md
-└── backend/             The server, not built yet. Plan and API live here.
+└── backend/             Phase 1a built: the Airbnb calendar reader.
+    ├── src/ical/             parse · fetch · connect · probe (CLI)
+    ├── test/                 checks + real-shaped .ics fixtures
     ├── README.md
     └── .env.example
 ```
@@ -48,21 +52,29 @@ the full first flow end to end: calendar sync → a booking → collect adult ID
 (by admin or by the guest) → send to the correct society → auto-remove after
 checkout. Admin and guest access are separated.
 
-The **backend does not exist yet.** `backend/README.md` describes the planned
-data model, API, and jobs so we can build it without re-deciding anything.
+The **backend is started.** Phase 1a — the Airbnb calendar reader — is built and
+tested; run `npm run probe` against your own listing. Everything else is still
+the plan in `backend/README.md`, which describes the data model, API and jobs so
+we can build without re-deciding anything.
 
-## Run the frontend
+## Run it
 
-No build step and no server needed for the prototype. Either:
-
-- Open `frontend/index.html` directly in a browser, or
-- Serve the folder (nicer for clean URLs while developing):
+The server serves the frontend too, from the same origin, so there is one
+command and no CORS.
 
 ```bash
-cd frontend
-python3 -m http.server 5173
-# open http://localhost:5173
+cd backend
+npm install
+npm start
+# open http://localhost:8080
 ```
+
+Migrations run on boot. The admin passcode starts at `0000` — change it in
+Settings → Admin access. The database is `backend/data/gatepass.db` by default.
+
+> There is no static-only mode any more: the frontend calls the API for
+> everything, and `file://` cannot load ES modules. `./dev.sh` still serves the
+> files alone if you only want to look at the markup.
 
 Admin passcode in the prototype starts at **0000** (change it in
 Settings → Admin access). To see the guest page, open a booking and use **Copy
@@ -76,12 +88,23 @@ device.
 ## Checks
 
 ```bash
-# with the folder served, or just open the file
-open http://localhost:5173/test.html
+open http://localhost:5173/frontend/test.html   # the UI's rules + data layer
+cd backend && npm test                          # shared rules + calendar reader
 ```
 
-No runner, no dependencies. The page title shows the score; every line must read
-PASS. Layout and rendering are still checked by hand — see `docs/TESTING.md`.
+No runner and no dependencies either side. The browser page's title shows the
+score; every line must read PASS. **Both suites exercise the same
+`shared/rules.js`.** Layout and rendering are still checked by hand — see
+`docs/TESTING.md`.
+
+## Try your Airbnb calendar
+
+```bash
+cd backend
+npm run probe -- "https://www.airbnb.co.in/calendar/ical/XXXX.ics?s=YYYY"
+```
+
+Airbnb → your listing → Availability → Connect calendars → Export calendar.
 
 ## Where to start reading
 

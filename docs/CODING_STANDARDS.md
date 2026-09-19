@@ -23,9 +23,17 @@ of a specific hazard, the hazard is named.
 
 | File | Holds | Never holds |
 | --- | --- | --- |
-| `config.js` | Tunables the **product** owns: retention windows, document types, template placeholders, timings, page size, status labels. | Anything a host would edit. |
-| `data.js` | Where data comes from. `Derive` (the rules), `fillTemplate`, the async `Data` API, and `SEED`. | Markup, DOM, rendering. |
-| `app.js` | Rendering and behaviour. | Data, tunables, or any literal value. |
+| `shared/rules.js` | **The rules**, imported by the browser *and* the server: status precedence, retention windows, calendar maths, `sendDue`, template placeholders and filling. Pure — no DOM, no database, no `node:` imports. | Anything runtime-specific. |
+| `frontend/js/config.js` | Presentation knobs: copy, timings, page size, document types. | Rules, or anything a host would edit. |
+| `frontend/js/data.js` | Where data comes from: the async `Data` API and `SEED`. | Markup, DOM, or a second copy of a rule. |
+| `frontend/js/app.js` | Rendering and behaviour. | Data, tunables, or any literal value. |
+
+**A rule goes in `shared/rules.js` or it does not exist.** If the server will
+ever need to agree with the browser about it — a status, a retention window,
+whether a send is due — it belongs there, imported by both. A second
+implementation of `status` is the bug that makes the UI say "ready" while the
+server says "awaiting" and no email is ever sent. It is a blocking review
+finding.
 
 **The test for where something goes:** would the host change it? Then it is
 data. Would we change it in a release? Then it is config. Is it neither, and you

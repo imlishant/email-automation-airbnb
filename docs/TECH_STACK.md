@@ -47,14 +47,15 @@ choice here is made so as not to throw it away.
 | Transport | **JSON over HTTP/2, ETags, SSE for live updates** | One long-lived connection beats polling; conditional GETs make repeat loads free. |
 | Runtime | **Node 22 LTS** | Same language as the frontend, one mental model for one maintainer. |
 | HTTP server | **Fastify** | Schema-first validation and serialisation; markedly faster than Express and less code. |
-| Database | **SQLite, WAL mode, via `better-sqlite3`** | In-process. Queries cost microseconds, not milliseconds — there is no network hop to make. |
-| Query layer | **Drizzle ORM** | SQL you can read, types you can trust, no query engine binary. |
-| Migrations | **Plain numbered `.sql` files** | Forward-only, reviewable, no tool to learn. |
+| Database | **Turso (libSQL)** — SQLite over the wire | Keeps SQLite semantics and the Drizzle SQLite dialect on a host with no persistent disk. |
+| Query layer | **None — parameterised SQL in `src/db/`** | Drizzle's main benefit is types, and this is plain JS. §3 has the reversal. |
+| Migrations | **Plain numbered `.sql` files** + a 40-line migrator | Forward-only, reviewable, no tool to learn. |
 | Background work | **In-process scheduler + a `jobs` table** | Durable and restartable without Redis or a second service. |
-| File storage | **Local disk → S3-compatible (Cloudflare R2)** | Encrypted at rest; R2 has no egress fees. |
-| Email | **Resend** (Postmark as the fallback) | Attachment support, good deliverability, a small API. |
-| Hosting | **One small VPS (Hetzner CX22 or Fly.io), persistent volume** | SQLite needs a filesystem; jobs need a live process. |
-| Backups | **Litestream → object storage** | Continuous replication of the SQLite file. Point-in-time recovery, no DB server. |
+| File storage | **Cloudflare R2** (S3-compatible), from day one | Encrypted at rest, 10GB free, zero egress fees. Local disk is not an option on Render. |
+| Email | **The host's own Gmail over SMTP** (app password) | The societies already correspond with that address; a transactional provider cannot send as it. |
+| Hosting | **Render free web service** | Chosen constraint. §2a covers what it costs and how each cost is handled. |
+| Scheduler trigger | **External free cron pinging `/jobs/tick`** | Render free has no cron and sleeps after 15 minutes idle. One ping solves both. |
+| Backups | **Turso point-in-time restore + a nightly SQL dump to R2** | No DB file to replicate when the DB is not local. |
 | Tests | **`node:test` + `node:assert`** (built in) + the browser checks in `frontend/test.html` | Zero dependencies for the thing that guards correctness. |
 | CI | **GitHub Actions**: migrate, test, build, deploy | One file. |
 
@@ -63,6 +64,93 @@ review. Every addition is a place someone else's code runs next to identity
 documents (`SECURITY.md`).
 
 ---
+
+## 2a. Building on Render's free tier
+
+**This is a chosen constraint, and it overrides two choices made in §2.** Written
+out plainly because the failure modes are not obvious and two of them would have
+broken the product rather than merely slowed it.
+
+### What the free tier takes away
+
+| Free-tier fact | What it breaks |
+| --- | --- |
+| **No persistent disk.** The filesystem is ephemeral and is wiped on every deploy and every restart. | A local SQLite file and a local `uploads/` directory both **silently vanish**. The original plan assumed a volume. |
+| **Spins down after ~15 minutes idle**, cold start of roughly 30–60s. | A guest opening their link after a quiet spell waits a minute at the gate. And a sleeping process runs **no scheduled jobs** — so "auto-send 1 hour before check-in" simply never fires. |
+| **No cron jobs** on the free plan. | Nothing to drive the calendar poll or the timed send. |
+| Render's own free Postgres **expires after a trial window**. | Not a foundation to build on. |
+
+The second row is the serious one. A tool whose whole promise is "automatic
+beats correct-if-you-remember" (`PRODUCT_PRINCIPLES.md`, 3) cannot have a
+scheduler that sleeps.
+
+### How each is handled, still free
+
+**Database → Turso (libSQL).** SQLite-compatible, hosted, persistent, with a
+free tier. Drizzle keeps the same SQLite dialect and the schema is unchanged,
+so this is a driver swap rather than a redesign.
+
+What it costs, honestly: **the in-process advantage is gone.** A query is now a
+network call of roughly 10–30ms instead of microseconds. That was the headline
+reason for choosing SQLite, so it has to be paid for elsewhere:
+
+- Fewer, larger queries per request. No N+1, ever — the list endpoint is one
+  query plus one aggregate, never a query per booking.
+- ETags on list responses, so the common repeat load costs nothing (§5).
+- The working set is tens of rows, so a single round trip returns everything a
+  screen needs.
+
+The budget in §4 moves accordingly: **list p95 ≤ 120ms** instead of 25ms, which
+is still comfortably below the point where a screen feels slow.
+
+**Files → Cloudflare R2 from day one.** 10GB free and no egress charges. Local
+disk is not a "start here and migrate later" option any more, because on this
+host it loses data. Streamed and encrypted exactly as planned.
+
+**Scheduler → an external cron ping.** A free scheduler (cron-job.org, or
+UptimeRobot at 5-minute resolution) POSTs to `/jobs/tick` with a shared secret
+every 10 minutes. That one arrangement does three jobs at once:
+
+1. It drives the job queue — the tick claims and runs whatever is due.
+2. It keeps the service **above** the 15-minute idle threshold, so the guest at
+   the gate never meets a cold start.
+3. It costs nothing and is visible: a missed ping shows up as a stale
+   "last synced".
+
+`/jobs/tick` must therefore be idempotent, fast to return, and authenticated by
+a secret — it is a public URL that does real work.
+
+> **GitHub Actions is the wrong tool here**, despite being the obvious one.
+> Scheduled workflows bill a **minimum of one minute per run**, so a 10-minute
+> cadence is ~4,300 billable minutes a month against a 2,000-minute free
+> allowance on a private repo. It only works if the repo is public. A purpose-built
+> free pinger does not have this problem.
+
+**Email → the host's own Gmail over SMTP.** Free, and the societies already
+know that address. A free Gmail allows on the order of 500 recipients a day and
+25MB of attachments, which is far beyond a handful of bookings with a few ID
+photos. See `DECISIONS.md` for why a transactional provider is the fallback
+rather than the default: none of them can send as an arbitrary `@gmail.com`.
+
+### The honest residual risks
+
+- **Free tiers change.** Every limit above should be re-checked against the
+  provider's current page before it is relied on, not taken from this document.
+- **Cold starts are mitigated, not eliminated.** A deploy, a platform restart,
+  or a missed run of pings can still leave one unlucky guest waiting ~50s.
+- **The first thing worth paying for** is Render's paid instance tier, which
+  removes spin-down entirely. Nothing else in this stack needs money before
+  that.
+- **Two network hops now sit in every request** (client → Render → Turso), and
+  Render's free region may not be near Turso's. **Put both in the same region**
+  — this is the single highest-value configuration choice on this stack.
+
+### What did not change
+
+The schema, the `Derive` rules, the job-table design, the API surface and the
+entire frontend are untouched. That is the payoff for having written the data
+layer against an interface rather than against a database — the host changed and
+the application did not.
 
 ## 3. Why each choice — and what was rejected
 
@@ -135,7 +223,12 @@ binary is a lovely deploy story. Rejected because the maintainer writes
 JavaScript, this workload is nowhere near needing Go's performance, and the
 extra CRUD verbosity would be paid on every feature forever.
 
-### Database: SQLite, not Postgres
+### Database: SQLite semantics, not Postgres
+
+> Revised by §2a: the engine is **Turso (libSQL)** rather than a local SQLite
+> file, because Render's free tier has no persistent disk. The argument below is
+> why SQLite *semantics* are right for this workload, and it still holds. What
+> no longer holds is the in-process latency claim.
 
 This is the choice most likely to be questioned, so here is the whole argument.
 
@@ -151,7 +244,8 @@ At this data volume Postgres buys nothing in exchange:
 - Concurrent writers? There is **one** writer. WAL mode lets readers run
   uninterrupted alongside it.
 - Size? The whole database will be **megabytes**, and comfortably cached in RAM.
-- Durability? Litestream streams the WAL to object storage continuously.
+- Durability? Turso handles replication and point-in-time restore; a nightly
+  SQL dump to R2 is the second copy.
 - Complex queries? The hardest query in this system is "bookings by check-in
   with a status derivation", which is one indexed scan.
 
@@ -169,6 +263,22 @@ move is a decision and not a panic:
 
 Drizzle is chosen partly *because* it makes that migration a change of driver
 and dialect rather than a rewrite.
+
+**Reversed: Drizzle ORM** (2026-09-19, during Phase 1b). It was chosen for
+"SQL you can read, types you can trust" — but this codebase is plain
+JavaScript, so there are no types to trust, and the benefit collapsed to a query
+builder over ten tables whose hot path is a single `SELECT`.
+
+What replaced it: parameterised SQL in `src/db/`, one dependency
+(`@libsql/client`) for the entire data layer, and a ~40-line migrator over
+numbered `.sql` files. The schema is now readable as SQL by anyone — including
+an assistant asked to change it later — rather than as a DSL. Every hot query
+carries an `EXPLAIN QUERY PLAN` assertion in the test suite, which is a stronger
+guarantee about performance than a query builder would have given.
+
+The migration path to Postgres is unaffected: the SQL is confined to one folder
+and is close to standard. **If this ever moves to TypeScript, revisit** — with
+real types, Drizzle earns its place.
 
 **Rejected: Prisma.** Ships a Rust query engine binary, a generate step, and a
 heavy client. Directly against "lightweight".
@@ -221,17 +331,27 @@ must never become 5MB of heap. Images are resized and EXIF-stripped on the way
 in (a photo of a passport carries GPS), which also keeps the email under
 provider attachment limits.
 
-**Email:** Resend. Attachments, a small API, good deliverability, generous free
-tier. Postmark is the fallback if transactional deliverability to Indian society
-mailboxes proves poor — worth measuring rather than assuming. SMTP stays
-supported because some societies will want mail from the host's own domain.
+**Email:** the host's own Gmail over SMTP, with an app password.
 
-**Hosting:** one small VPS with a persistent volume. **Serverless is rejected
-outright**, and for concrete reasons, not taste: SQLite needs a durable
-filesystem; the scheduler needs a long-lived process; and a cold start of
-200–800ms lands exactly on the guest standing at the gate. A €4/month VM with
-2GB of RAM serves this workload with room for orders of magnitude more, and it
-is one `ssh` to debug.
+This began as "Resend, with SMTP as a fallback" and was **reversed** once the
+requirement became clear: the host already has an email thread with each
+society's desk, and mail arriving from a different sender is worse on both
+deliverability and human grounds. A transactional provider cannot send as an
+arbitrary `@gmail.com` — they require a verified domain — so the provider is now
+the fallback, for a host with no such address.
+
+The cost is one stored credential, which is otherwise something this system
+avoids. `SECURITY.md` sets the rules around it.
+
+**Hosting:** Render's free web service, as chosen. §2a is the full account of
+what that costs and how each cost is covered. The short version: a long-lived
+process is still the right shape — this is a container that sleeps, not a
+function that scales to zero — but its filesystem cannot be trusted and its
+sleep has to be prevented.
+
+**Function-style serverless remains rejected**, and the reasons survive the
+move: the scheduler needs a process that exists between requests, and a
+per-invocation cold start lands exactly on the guest standing at the gate.
 
 ---
 
@@ -246,11 +366,13 @@ Numbers to hold, not aspirations. Anything that breaks one of these is a bug.
 | Guest page interactive | **< 1.2s on mid-range Android over 4G** | They are standing at a gate. |
 | Admin first paint | **< 1.0s** on a warm cache | Feels instant rather than loaded. |
 | Cumulative layout shift | **0** | Fixed-height error slots and reserved space; nothing may jump. |
-| API p95, list endpoint | **< 25ms server time** | One indexed query with a bounded result. |
-| API p95, detail endpoint | **< 15ms server time** | Point lookups. |
+| API p95, list endpoint | **< 120ms** end to end | One indexed query plus one aggregate, over a network hop to Turso (§2a). |
+| API p95, detail endpoint | **< 90ms** end to end | Point lookups, one round trip. |
+| Queries per request | **≤ 3** | The hop is now the cost. N+1 is a blocking review finding. |
 | Upload, 5MB over 4G | **< 6s, streamed** | Bounded by the network, not by us. |
 | Memory, steady state | **< 150MB RSS** | Fits the smallest useful VM. |
 | Cold start after deploy | **< 1s to first request served** | |
+| Guest page, warm service | **no cold start, ever** | The cron ping keeps the instance above the idle threshold (§2a). |
 
 Measured in CI on every change, with the JS/CSS budgets failing the build.
 
@@ -280,18 +402,28 @@ ORDER BY check_in, id
 LIMIT :limit;
 ```
 
-**3. Indexes that cover the list query.** The only hot query is the list.
+**3. Indexes that cover the hot queries.** These are the ones built, and each
+has an `EXPLAIN QUERY PLAN` assertion in `backend/test/db.test.js` — asserting
+both that an index is used *and* that no `TEMP B-TREE` sort appears.
 
 ```sql
-CREATE INDEX bookings_list      ON bookings (check_out, check_in, id);  -- retention + order
-CREATE INDEX bookings_listing   ON bookings (listing_id, check_in, id); -- the filter
-CREATE UNIQUE INDEX bookings_code ON bookings (airbnb_code);            -- sync upsert
+CREATE INDEX bookings_list      ON bookings (check_out, check_in, id);  -- retention filter
+CREATE INDEX bookings_chrono    ON bookings (check_in, id);             -- ORDER BY + keyset cursor
+CREATE INDEX bookings_listing   ON bookings (listing_id, check_in, id); -- the listing filter
+CREATE INDEX bookings_uid       ON bookings (ical_uid);                 -- sync fallback key
+-- airbnb_code and guest_links.token get automatic unique indexes
 CREATE INDEX people_booking     ON people (booking_id);
-CREATE INDEX documents_person   ON documents (person_id);
-CREATE UNIQUE INDEX guest_links_token ON guest_links (token);           -- guest lookup
+CREATE UNIQUE INDEX documents_person ON documents (person_id);          -- one ID per adult
 CREATE INDEX activity_booking   ON activity (booking_id, at DESC);
-CREATE INDEX jobs_due           ON jobs (run_after, claimed_at);        -- scheduler tick
+CREATE INDEX jobs_due           ON jobs (run_after, claimed_at, completed_at);
 ```
+
+`bookings_chrono` was added as migration 002 after `EXPLAIN` showed the original
+index could not serve both the `check_out` range filter and `ORDER BY check_in`
+— a range scan on a leading column leaves the second column unordered, so SQLite
+was sorting in memory. Cost-free at this volume, but the keyset cursor needs a
+genuinely ordered index to stay flat as pages deepen. A claim like "one indexed
+scan" is worth checking with `EXPLAIN` rather than asserting.
 
 Note what is *not* there: the list never joins `documents`. It needs a count per
 booking, which comes from a cheap aggregate over `people`, not from touching the
@@ -301,10 +433,15 @@ heavy table.
 downloads bookings in order to decide which to show. This keeps the JSON small,
 which matters far more on 4G than server time does.
 
-**5. Conditional GETs.** Each list response carries an `ETag` derived from the
-newest `updated_at` in the result. A revisit sends `If-None-Match` and usually
-gets a 304 with an empty body. The common case — the host reopening the tab —
-becomes nearly free.
+**5. Conditional GETs.** Built. Each list response carries an `ETag` derived
+from the row count, the newest change, the page parameters and the host's
+times — so an edit, a deletion, a different page *and* a settings change all
+move it. A revisit sends `If-None-Match` and gets a 304 with an empty body.
+Verified: `304` with `size_download: 0`.
+
+The row count matters as much as the timestamp. An ETag built only from
+`max(updated_at)` does not change when a row is deleted, which would hide a
+booking dropping off the list behind a stale cache.
 
 **6. SSE, not polling, for live updates.** One long-lived
 `text/event-stream` connection pushes "booking changed" events. Polling every
@@ -353,16 +490,19 @@ host learns about it from a guest at a gate.
 
 ## 7. Cost
 
-| Item | Monthly |
-| --- | --- |
-| VPS (2GB, Hetzner CX22 class) | ~€4 |
-| Object storage (R2, a few GB, no egress fees) | < €1 |
-| Email (Resend free tier covers this volume) | €0 |
-| Domain | ~€1 amortised |
-| **Total** | **well under €10** |
+| Item | Free tier | Monthly |
+| --- | --- | --- |
+| Render web service | 750 instance-hours; sleeps when idle | €0 |
+| Turso (libSQL) | enough storage and reads for orders of magnitude more than this | €0 |
+| Cloudflare R2 | 10GB, zero egress | €0 |
+| Email (the host's existing Gmail) | ~500 recipients/day | €0 |
+| External cron ping | free scheduler | €0 |
+| Domain (optional — Render gives a subdomain) | — | ~€1 amortised |
+| **Total** | | **€0** |
 
-Serverless plus a hosted Postgres plus a managed queue would be several times
-this, for a workload that does not need any of them.
+**The first upgrade worth buying**, if and when it matters, is Render's paid
+instance tier to remove spin-down. That is one line item, not a re-architecture
+— which is the point of keeping the pieces swappable.
 
 ---
 

@@ -4,20 +4,28 @@ Working prototype. Plain HTML, CSS and JS — no build step, no framework.
 
 - `index.html` — shell markup, the two font links, and the pre-paint theme script
 - `css/styles.css` — all styles, themed with CSS variables (light/dark aware)
-- `js/config.js` — every tunable the product owns. No data.
-- `js/data.js` — the data boundary: `Derive` (the rules), `fillTemplate`, the
-  async `Data` API, and `SEED`, the only mock values in the app
+- `js/config.js` — presentation knobs: copy, timings, page size, document types
+- `../shared/rules.js` — **the rules**, imported by the server too: status
+  precedence, retention, calendar maths, `sendDue`, template filling. One
+  implementation, so the UI and the server cannot disagree
+- `js/data.js` — the data boundary: every call to the API lives here, and
+  nothing else in the frontend knows the server exists
 - `js/app.js` — rendering and behaviour. No data, no tunables, no literals
 - `test.html` — runnable checks. Open it; the title shows the score
 
 ## Run
 
-Open `index.html` in a browser, or serve the folder:
+Serve from the **repo root**, not this folder — `js/app.js` imports
+`../../shared/rules.js`.
 
 ```bash
+cd ..
 python3 -m http.server 5173
-# http://localhost:5173
+# http://localhost:5173/frontend/index.html
 ```
+
+`file://` does not work any more: the page is an ES module and browsers block
+module imports from the filesystem.
 
 ## Notes
 

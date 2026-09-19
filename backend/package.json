@@ -1,0 +1,29 @@
+{
+  "name": "gatepass-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "GatePass server. See ../docs/TECH_STACK.md before adding a dependency.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "dev": "node --watch --env-file-if-exists=.env src/index.js",
+    "test": "node --test",
+    "probe": "node src/ical/probe.js",
+    "migrate": "node src/db/cli.js",
+    "demo": "node src/db/demo.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/multipart": "^10.1.1",
+    "@fastify/rate-limit": "^11.2.0",
+    "@fastify/static": "^10.1.4",
+    "@libsql/client": "^0.18.0",
+    "aws4fetch": "^1.0.20",
+    "fastify": "^5.12.5",
+    "nodemailer": "^10.0.10"
+  },
+  "main": "src/index.js"
+}

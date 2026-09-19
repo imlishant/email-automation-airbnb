@@ -1,0 +1,51 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Airbnb Inc//Hosting Calendar 1.0.0//EN
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20261201
+DTEND;VALUE=DATE:20261205
+SUMMARY:Reserved
+UID:dup-0001@airbnb.com
+DESCRIPTION:Reservation URL: https://www.airbnb.com/hosting/reservations/details/HMDUPE0001
+END:VEVENT
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20261201
+DTEND;VALUE=DATE:20261205
+SUMMARY:Reserved
+UID:dup-0001@airbnb.com
+DESCRIPTION:Reservation URL: https://www.airbnb.com/hosting/reservations/details/HMDUPE0001
+END:VEVENT
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20261203
+DTEND;VALUE=DATE:20261207
+SUMMARY:Reserved
+UID:overlap-0002@airbnb.com
+DESCRIPTION:Reservation URL: https://www.airbnb.com/hosting/reservations/details/HMOVER0002
+END:VEVENT
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20261220
+SUMMARY:Reserved
+UID:nodtend-0003@airbnb.com
+DESCRIPTION:Reservation URL: https://www.airbnb.com/hosting/reservations/details/HMNOEND003
+END:VEVENT
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20261224
+DTEND;VALUE=DATE:20261224
+SUMMARY:Reserved
+UID:zero-0004@airbnb.com
+DESCRIPTION:Reservation URL: https://www.airbnb.com/hosting/reservations/details/HMZERO0004
+END:VEVENT
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20270105
+DTEND;VALUE=DATE:20270108
+SUMMARY:Maintenance\; deep clean\, no guests
+UID:weird-0005@airbnb.com
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20270201T110000Z
+DTEND:20270204T100000Z
+SUMMARY:Reserved
+UID:datetime-0006@airbnb.com
+DESCRIPTION:Reservation URL: https://www.airbnb.com/hosting/reservations/details/HMDTIME006
+END:VEVENT
+END:VCALENDAR
