@@ -148,7 +148,7 @@ function mountTheme(host, label) {
 }
 
 // ---------- state ----------
-const view = { screen: "bookings", bookingId: null, listingId: null, tab: "listings", openSoc: null, editListing: null };
+const view = { screen: "bookings", bookingId: null, listingId: null, tab: "listings", openSoc: null, editListing: null, addSoc: false };
 const main = document.getElementById("main");
 
 // Every render awaits data, so a second render can start before the first
@@ -557,7 +557,7 @@ async function renderSetListings(body, seq) {
       <div style="color:var(--muted);font-size:12.5px">Paste the calendar link first. The name fills from the calendar where possible — edit it if needed. You pick the society yourself, so it is never guessed.</div>
       <input class="input" id="newIcal" placeholder="Paste Airbnb calendar link (.ics)" inputmode="url">
       <input class="input" id="newName" placeholder="Listing name (from the calendar — editable)">
-      <select class="input" id="newSoc" aria-label="Society">${socOpts}<option value="new">＋ New society…</option></select>
+      <select class="input" id="newSoc" aria-label="Society"><option value="" disabled selected>${societies.length ? "Pick the society" : "Add a society first"}</option>${socOpts}<option value="new">＋ New society…</option></select>
       <button class="btn primary" id="addListing" style="align-self:flex-start">Connect listing</button>
     </div>`;
   // --- listing edit / disconnect / delete ---------------------------------
@@ -626,7 +626,25 @@ async function renderSetListings(body, seq) {
     await Data.saveSettings({ checkInTime: ci.value, checkOutTime: co.value });
     toast("Times saved"); render();
   };
+  // Read the calendar as soon as it is pasted: proves the link works and
+  // fills the name when the calendar carries one.
+  document.getElementById("newIcal").onchange = async (e) => {
+    const url = e.target.value.trim();
+    if (!url) return;
+    let rep;
+    try { rep = await Data.checkCalendar(url); } catch (err) { toast(err.message || "Could not read that link"); return; }
+    if (!rep.ok) { toast(rep.message || "Could not read that calendar"); return; }
+    const nm = document.getElementById("newName");
+    if (nm && !nm.value.trim() && rep.calendarName) nm.value = rep.calendarName;
+    toast(`Calendar read — ${fmt.count(rep.upcoming.length, "upcoming booking", "upcoming bookings")}`);
+  };
+  // "New society…" goes to the form that creates one; a listing needs it first.
+  document.getElementById("newSoc").onchange = (e) => {
+    if (e.target.value === "new") { view.tab = "societies"; view.addSoc = true; render(); }
+  };
   document.getElementById("addListing").onclick = async () => {
+    const soc = document.getElementById("newSoc").value;
+    if (!soc || soc === "new") { toast(societies.length ? "Pick the society this listing sits in" : "Add a society first, under Societies & templates"); return; }
     const res = await Data.addListing({
       icalUrl: document.getElementById("newIcal").value,
       name: document.getElementById("newName").value,
@@ -644,7 +662,16 @@ async function renderSetSocieties(body, seq) {
   body.innerHTML = `
     <p class="setnote">Each society keeps its own security desk email and its own template. Listings in the same society share one; different societies each use their own.</p>
     ${societies.map((s) => socCard(s, listings.filter((l) => l.societyId === s.id).length)).join("")}
-    <button class="btn" id="addSoc" style="margin-top:6px"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Add a society</button>`;
+    ${view.addSoc ? `<div class="listing-row" style="flex-direction:column;align-items:stretch;gap:10px">
+      <div class="nm">New society</div>
+      <div class="field"><label for="nsName">Name</label><input class="input" id="nsName" placeholder="e.g. Prestige Lakeside"></div>
+      <div class="field"><label for="nsTo">Send to</label><div class="desc">The society's security / gate desk.</div><input class="input" id="nsTo" type="email"></div>
+      <div class="field"><label for="nsCc">Cc</label><div class="desc">Optional. Comma-separated.</div><input class="input" id="nsCc"></div>
+      <div class="field"><label for="nsTpl">Email template</label>
+        <div class="desc">Placeholders fill per booking: ${TEMPLATE_VARS.map((v) => `<span class="var" title="${esc(v.describe)}">{{${esc(v.token)}}}</span>`).join("")}</div>
+        <textarea class="input" id="nsTpl"></textarea></div>
+      <div style="display:flex;gap:8px"><button class="btn primary" id="nsSave">Add society</button><button class="btn" id="nsCancel">Cancel</button></div>
+    </div>` : `<button class="btn" id="addSoc" style="margin-top:6px"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Add a society</button>`}`;
   // esc() leaves quotes alone, so these values are set as properties, never
   // through markup (docs/CODING_STANDARDS.md).
   societies.forEach((s) => {
@@ -666,8 +693,31 @@ async function renderSetSocieties(body, seq) {
     // Only claim success on success: this is the address IDs get emailed to.
     toast(res.ok ? "Society saved" : (res.message || "That was not saved"));
   });
-  document.getElementById("addSoc").onclick = () => toast("Name the society, add its desk email and template");
+  if (!view.addSoc) { document.getElementById("addSoc").onclick = () => { view.addSoc = true; render(); }; return; }
+  document.getElementById("nsTpl").value = STARTER_TEMPLATE;
+  document.getElementById("nsCancel").onclick = () => { view.addSoc = false; render(); };
+  document.getElementById("nsSave").onclick = async () => {
+    const val = (id) => document.getElementById(id).value.trim();
+    if (!val("nsName") || !val("nsTo") || !val("nsTpl")) { toast("Fill in the name, desk email and template"); return; }
+    const res = await Data.addSociety({ name: val("nsName"), to: val("nsTo"), cc: val("nsCc"), template: val("nsTpl") });
+    if (!res.ok) { toast(res.message || "That was not saved"); return; }
+    view.addSoc = false; view.openSoc = res.society.id;
+    toast("Society added — now connect its listings"); render();
+  };
 }
+const STARTER_TEMPLATE = `Hello,
+
+Please allow entry for our guests at {{listing}}, {{society}}.
+
+Guest: {{guest_name}}
+Adults: {{adult_count}}
+Check-in: {{check_in}}
+Check-out: {{check_out}}
+Booking: {{booking_id}}
+
+Their ID documents are attached.
+
+Thank you`;
 function socCard(s, listingCount) {
   const open = view.openSoc === s.id;
   return `<div class="soc ${open ? "open" : ""}">
@@ -933,8 +983,10 @@ function listenGuest(token) {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   const token = guestToken();
+  // Settings only change here, and re-rendering would wipe a half-filled form.
+  if (editing()) return;
   if (token) showGuest(token);
-  else if (unlocked) render();
+  else if (unlocked && view.screen !== "settings") render();
 });
 boot();
 

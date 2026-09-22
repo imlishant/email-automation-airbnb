@@ -111,6 +111,10 @@ const Data = {
 
   // --- societies ----------------------------------------------------------
   async societies() { return request("/societies"); },
+  async addSociety({ name, to, cc, template }) {
+    try { return { ok: true, society: await request("/societies", { method: "POST", body: { name, to, cc, template } }) }; }
+    catch (e) { return { ok: false, reason: e.reason, message: e.message }; }
+  },
   async saveSociety(id, patch) {
     try { return { ok: true, society: await request(`/societies/${id}`, { method: "PATCH", body: patch }) }; }
     catch (e) { return { ok: false, reason: e.reason, message: e.message }; }

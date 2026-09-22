@@ -29,6 +29,12 @@ Security entries are always listed, even when the fix is small.
   needed: Render + Turso + Gmail is the whole setup. The retention purge
   deletes the stored bytes along with the booking.
 - `.node-version` pins Node 22 so Render doesn't pick an untested release.
+- **Add a society** now opens a real form (name, desk email, Cc, a starter
+  template). It was a placeholder that only showed a message, which also
+  blocked connecting listings. "New society…" in the listing form opens it.
+- Pasting a calendar link reads it straight away and fills the listing name.
+- Switching browser tabs no longer re-renders Settings or anything mid-edit,
+  so half-filled forms survive.
 - The app loads at the site root (`/`) instead of `/frontend/index.html`; old
   links redirect. The server now serves only `frontend/` and `shared/` — it
   previously served the whole repo, including backend source and docs.
