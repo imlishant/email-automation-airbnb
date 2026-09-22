@@ -283,7 +283,7 @@ Not scheduled. Each is its own phase, agreed before building.
    vars); and invite their own admins/co-hosts, the way Airbnb co-hosting works.
    Needs: user accounts, per-host data separation on every table, per-host
    encrypted SMTP credentials, invitations. Large — a new phase.
-2. **A URL per page.** Bookings, a booking's detail and Settings tabs all sit at
+2. **(Done 2026-09-22)** **A URL per page.** Bookings, a booking's detail and Settings tabs all sit at
    `/`, so back/forward, refresh and bookmarks lose your place. Give each
    screen its own address (e.g. `/#bookings/<id>`, `/#settings/societies`).
 3. **Telling bookings of the same flat apart.** Airbnb's calendar feed gives

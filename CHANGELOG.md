@@ -40,6 +40,9 @@ Security entries are always listed, even when the fix is small.
   failure now shows a message. A **Lock** button (sidebar) signs out, which is
   also the way to reach the owner sign-in link.
 - The sidebar listing count updates when listings change.
+- **Every screen has its own address**: `#bookings` (home), `#bookings/<id>`,
+  `#settings/listings|societies|access`. Refresh, Back/Forward and bookmarks
+  keep your place. The GatePass logo goes home.
 - The app loads at the site root (`/`) instead of `/frontend/index.html`; old
   links redirect. The server now serves only `frontend/` and `shared/` — it
   previously served the whole repo, including backend source and docs.

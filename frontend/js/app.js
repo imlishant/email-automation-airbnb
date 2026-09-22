@@ -155,8 +155,39 @@ const main = document.getElementById("main");
 // finishes. The sequence number makes the stale one discard its result instead
 // of painting over the newer screen.
 let renderSeq = 0;
+
+// ---------- addresses ----------
+// Every screen has its own address, so refresh, back/forward and bookmarks
+// keep your place: #bookings (home), #bookings/<id>, #settings/<tab>.
+// Guest links stay #u/<token> and are handled separately.
+function routeToView() {
+  const [a, b] = (location.hash || "").replace(/^#\/?/, "").split("/");
+  if (a === "settings") {
+    view.screen = "settings";
+    if (TABS.some((t) => t.key === b)) view.tab = b;
+  } else if (a === "bookings" && b) {
+    view.screen = "detail"; view.bookingId = decodeURIComponent(b);
+  } else {
+    view.screen = "bookings";
+  }
+}
+function viewToRoute() {
+  if (view.screen === "settings") return `#settings/${view.tab}`;
+  if (view.screen === "detail") return `#bookings/${encodeURIComponent(view.bookingId)}`;
+  return "#bookings";
+}
+function syncAddress() {
+  const want = viewToRoute(), have = location.hash || "";
+  if (have === want) return;
+  // A real screen change adds a history entry (so Back works); arriving with
+  // no route, or from the sign-in link, just names the page.
+  const isRoute = /^#(bookings|settings)\b/.test(have);
+  try { history[isRoute ? "pushState" : "replaceState"](null, "", want); } catch { /* sandboxed */ }
+}
+
 async function render() {
   const seq = ++renderSeq;
+  syncAddress();
   document.querySelectorAll(".nav-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.nav === (view.screen === "detail" ? "bookings" : view.screen)));
   try {
@@ -935,6 +966,9 @@ async function mountApp() {
   listenAdmin();
   mountTheme(document.getElementById("themerow"), true);
   await refreshHostChip();
+  const brand = document.getElementById("brandHome");
+  if (brand) brand.onclick = (e) => { e.preventDefault(); view.screen = "bookings"; render(); };
+  routeToView();
   document.querySelectorAll(".nav-btn").forEach((b) => b.onclick = () => { view.screen = b.dataset.nav; render(); });
   render();
 }
@@ -957,7 +991,12 @@ setUnauthorisedHandler(() => {
   unlocked = false;
   showLock();
 });
-window.addEventListener("hashchange", () => { const t = guestToken(); if (t) showGuest(t); });
+// Back/forward, an edited address bar, or a pasted link.
+window.addEventListener("hashchange", () => {
+  const t = guestToken();
+  if (t) { showGuest(t); return; }
+  if (unlocked && !document.getElementById("guestScreen")) { routeToView(); render(); }
+});
 
 // ---------- live updates ----------
 // One EventSource per tab. The stream says only "booking X changed"; this
