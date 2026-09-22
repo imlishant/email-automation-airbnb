@@ -21,7 +21,9 @@ const API = "/api";
 /** Raised for any non-2xx. Carries the server's own reason, which is written for a human. */
 export class ApiError extends Error {
   constructor(status, body) {
-    super(body?.message || body?.error || `Request failed (${status})`);
+    super(body?.error === "owner_only"
+      ? "Only the owner can do that — press Lock, then use \u201cOwner? Email me a sign-in link\u201d"
+      : body?.message || body?.error || `Request failed (${status})`);
     this.name = "ApiError";
     this.status = status;
     this.reason = body?.error || "request_failed";
@@ -86,8 +88,8 @@ const Data = {
       await request("/auth/passcode", { method: "POST", body: { next } });
       return { ok: true };
     } catch (e) {
-      if (e.status === 400) return { ok: false, reason: e.body.message || "invalid" };
-      throw e;
+      // Every failure gets a reason on screen — a silent button is worse than an error.
+      return { ok: false, reason: e.status === 400 ? (e.body.message || "invalid") : e.message };
     }
   },
   // The server never reveals the passcode, by design — it only ever stores a

@@ -271,3 +271,24 @@ Found by using the prototype rather than by planning.
       host).
 - [ ] Adopt Preact + htm **only** if `app.js` passes ~1,500 lines or two screens
       need the same stateful widget
+
+## Backlog — raised by the host after first deploy (2026-09-22)
+
+Not scheduled. Each is its own phase, agreed before building.
+
+1. **Multi-host accounts.** Today one deployment = one host: one shared
+   passcode, one `OWNER_EMAIL`, one Gmail sender. To let other hosts use the
+   same site, each would sign in with their own email and see only their own
+   listings; set up their own sending Gmail from the website (not Render env
+   vars); and invite their own admins/co-hosts, the way Airbnb co-hosting works.
+   Needs: user accounts, per-host data separation on every table, per-host
+   encrypted SMTP credentials, invitations. Large — a new phase.
+2. **A URL per page.** Bookings, a booking's detail and Settings tabs all sit at
+   `/`, so back/forward, refresh and bookmarks lose your place. Give each
+   screen its own address (e.g. `/#bookings/<id>`, `/#settings/societies`).
+3. **Telling bookings of the same flat apart.** Airbnb's calendar feed gives
+   only the booking code, dates and the guest's phone last-4 — no name and no
+   guest count, so every synced booking shows the flat name and 1 adult until
+   someone edits it. Ideas: show the booking code more prominently and link it
+   to the Airbnb reservation page; let the host add a short nickname/note per
+   booking; nudge for the adult count on the list, not only in detail.

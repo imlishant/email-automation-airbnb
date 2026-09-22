@@ -35,6 +35,11 @@ Security entries are always listed, even when the fix is small.
 - Pasting a calendar link reads it straight away and fills the listing name.
 - Switching browser tabs no longer re-renders Settings or anything mid-edit,
   so half-filled forms survive.
+- Passcode change: admins signed in with the passcode now see that only the
+  owner can change it, and how; before, the button failed silently. Every
+  failure now shows a message. A **Lock** button (sidebar) signs out, which is
+  also the way to reach the owner sign-in link.
+- The sidebar listing count updates when listings change.
 - The app loads at the site root (`/`) instead of `/frontend/index.html`; old
   links redirect. The server now serves only `frontend/` and `shared/` — it
   previously served the whole repo, including backend source and docs.

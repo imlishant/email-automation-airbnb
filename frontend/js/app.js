@@ -594,7 +594,7 @@ async function renderSetListings(body, seq) {
     }
     const res = await Data.disconnectListing(id);
     if (!res.ok) { toast(res.message || "Could not disconnect that"); return; }
-    view.editListing = null; toast("Listing disconnected"); render();
+    view.editListing = null; toast("Listing disconnected"); refreshHostChip(); render();
   });
   body.querySelectorAll("[data-dellst]").forEach((el) => el.onclick = async () => {
     const id = el.dataset.dellst;
@@ -615,7 +615,7 @@ async function renderSetListings(body, seq) {
     }
     const res = await Data.deleteListing(id);
     if (!res.ok) { toast(LISTING_ERRORS[res.reason] || res.message || "Could not delete that"); return; }
-    view.editListing = null; toast("Listing deleted"); render();
+    view.editListing = null; toast("Listing deleted"); refreshHostChip(); render();
   });
 
   // Time inputs are set as properties, never through markup.
@@ -651,7 +651,7 @@ async function renderSetListings(body, seq) {
       societyId: document.getElementById("newSoc").value,
     });
     if (!res.ok) { toast(LISTING_ERRORS[res.reason] || "Could not connect that listing"); return; }
-    toast("Listing connected — it will start syncing");
+    toast("Listing connected — it will start syncing"); refreshHostChip();
     render();
   };
 }
@@ -737,15 +737,18 @@ function socCard(s, listingCount) {
 async function renderSetAccess(body, seq) {
   if (!fresh(seq)) return;
   const len = CONFIG.auth.passcodeLength;
+  const canSetPin = sessionInfo.role === "owner" || !sessionInfo.ownerTier;
   body.innerHTML = `
-    <p class="setnote">One ${len}-digit passcode unlocks the admin side for everyone on your team. It starts at ${esc(CONFIG.auth.firstRunPasscode)}, so you're never locked out. Any admin can change it here.</p>
+    <p class="setnote">One ${len}-digit passcode unlocks the admin side for everyone on your team. It starts at ${esc(CONFIG.auth.firstRunPasscode)}, so you're never locked out.
+      ${canSetPin ? "" : "Only the owner can change it, so the people it is shared with cannot lock each other out."}</p>
     <p class="setnote">The passcode itself is never shown. The server stores only a
-      hash and cannot read it back, so if it is forgotten, set a new one here.</p>
-    <div class="field"><label for="newpin">Change passcode</label>
-      <div class="desc">Enter a new ${len}-digit code. It takes effect right away.</div>
+      hash and cannot read it back, so if it is forgotten, the owner sets a new one here.</p>
+    ${canSetPin ? `<div class="field"><label for="newpin">Change passcode</label>
+      <div class="desc">Enter a new ${len}-digit code. It takes effect right away, and everyone signs in again with it.</div>
       <input class="input pinput" id="newpin" inputmode="numeric" maxlength="${len}" autocomplete="off" placeholder="${"•".repeat(len)}">
     </div>
-    <button class="btn primary" id="savepin">Update passcode</button>
+    <button class="btn primary" id="savepin">Update passcode</button>`
+    : `<p class="setnote"><b>To change it:</b> press <b>Lock</b> (bottom left), then use “Owner? Email me a sign-in link” and open the link from the owner’s Gmail.</p>`}
     <div class="section" style="margin-top:32px">
       <div class="sechead"><h2>Admin activity</h2></div>
       <p class="note">Changes to settings, passcode changes and lockouts. The passcode is shared, so
@@ -759,6 +762,7 @@ async function renderSetAccess(body, seq) {
       ? rows.map((r) => `<li><span class="bud"></span><span class="t">${esc(fmt.stamp(r.at))}</span><span>${esc(r.text)}${r.ip ? ` <span class="idcount">\u00b7 ${esc(r.ip)}</span>` : ""}</span></li>`).join("")
       : "<li><span>Nothing yet.</span></li>";
   }).catch(() => {});
+  if (!canSetPin) return;
   const inp = document.getElementById("newpin");
   inp.oninput = () => { inp.value = inp.value.replace(/\D/g, "").slice(0, len); };
   document.getElementById("savepin").onclick = async () => {
@@ -913,14 +917,24 @@ async function showGuest(token) {
 }
 
 // ---------- boot ----------
+// The sidebar chip: who is signed in and how many listings. Re-read whenever
+// listings change, or it goes stale until the next full page load.
+async function refreshHostChip() {
+  const profile = await Data.profile();
+  document.getElementById("hostchip").innerHTML = `<div class="av">${esc(initials(profile.name))}</div>
+    <div class="who"><b>${sessionInfo.role === "owner" ? "Owner" : "Admin"}</b><br><span>${esc(fmt.count(profile.listingCount, "listing", "listings"))}</span></div>
+    <button class="btn sm" id="lockBtn" style="margin-left:auto" title="Sign out of this browser">Lock</button>`;
+  document.getElementById("lockBtn").onclick = async () => {
+    try { await Data.lock(); } catch { /* already signed out */ }
+    unlocked = false; sessionInfo = { ...sessionInfo, admin: false, role: null };
+    showLock();
+  };
+}
 async function mountApp() {
   clearOverlays();
   listenAdmin();
   mountTheme(document.getElementById("themerow"), true);
-  const profile = await Data.profile();
-  const host = document.getElementById("hostchip");
-  host.innerHTML = `<div class="av">${esc(initials(profile.name))}</div>
-    <div class="who"><b>${sessionInfo.role === "owner" ? "Owner" : "Admin"}</b><br><span>${esc(fmt.count(profile.listingCount, "listing", "listings"))}</span></div>`;
+  await refreshHostChip();
   document.querySelectorAll(".nav-btn").forEach((b) => b.onclick = () => { view.screen = b.dataset.nav; render(); });
   render();
 }
