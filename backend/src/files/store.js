@@ -79,7 +79,39 @@ function r2Store({ endpoint, bucket, accessKeyId, secretAccessKey }) {
   };
 }
 
-export function chooseStore(config) {
+/**
+ * The encrypted bytes in the database (Turso in production). One account fewer
+ * than an object store, and the retention purge deletes them like any row.
+ */
+function dbStore({ client }) {
+  return {
+    name: "db",
+    async put(ref, bytes) {
+      await client.execute({
+        sql: "INSERT INTO file_blobs (ref, bytes, created_at) VALUES (?, ?, ?) ON CONFLICT(ref) DO UPDATE SET bytes = excluded.bytes",
+        args: [ref, bytes, new Date().toISOString()],
+      });
+      return { ref, bytes: bytes.length };
+    },
+    async get(ref) {
+      const res = await client.execute({ sql: "SELECT bytes FROM file_blobs WHERE ref = ?", args: [ref] });
+      const row = res.rows[0];
+      if (!row) return null;
+      // libsql hands BLOBs back as an ArrayBuffer.
+      return Buffer.from(row.bytes);
+    },
+    async remove(ref) {
+      const res = await client.execute({ sql: "DELETE FROM file_blobs WHERE ref = ?", args: [ref] });
+      return res.rowsAffected > 0;
+    },
+  };
+}
+
+export function chooseStore(config, { client } = {}) {
+  if (config.storage.driver === "db") {
+    if (!client) throw new Error("STORAGE_DRIVER=db needs a database client");
+    return dbStore({ client });
+  }
   if (config.storage.driver === "s3") {
     const { endpoint, bucket, accessKeyId, secretAccessKey } = config.storage;
     if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
@@ -90,4 +122,4 @@ export function chooseStore(config) {
   return localStore({ dir: config.storage.uploadDir });
 }
 
-export { localStore, r2Store };
+export { localStore, r2Store, dbStore };

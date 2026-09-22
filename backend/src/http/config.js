@@ -57,7 +57,8 @@ export function loadConfig(env = process.env) {
     // Tests only: lets the calendar fetcher reach a loopback feed server.
     icalAllowPrivateHosts: bool(env.ICAL_ALLOW_PRIVATE_HOSTS, false),
     storage: {
-      driver: env.STORAGE_DRIVER || "local",
+      // Production defaults to the database; development to a local folder.
+      driver: env.STORAGE_DRIVER || (production ? "db" : "local"),
       uploadDir: env.UPLOAD_DIR || "./data/uploads",
       encryptionKey: env.FILE_ENCRYPTION_KEY || "",
       maxBytes: num(env.UPLOAD_MAX_BYTES, 8 * 1024 * 1024),
@@ -96,7 +97,7 @@ export function loadConfig(env = process.env) {
     }
     if (cfg.storage.driver === "local") {
       // Render's filesystem is ephemeral: every ID would vanish on deploy.
-      fatal.push("STORAGE_DRIVER=local loses files on this host — use s3");
+      fatal.push("STORAGE_DRIVER=local loses files on Render (its disk is wiped on restart) — use db");
     }
   }
   if (production && cfg.icalAllowPrivateHosts) {

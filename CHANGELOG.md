@@ -23,6 +23,12 @@ Security entries are always listed, even when the fix is small.
 ## [Unreleased]
 
 ### Added
+
+- **ID photos stored encrypted in the database** (`STORAGE_DRIVER=db`, now the
+  production default). Migration `006_file_blobs.sql`. No Cloudflare R2 account
+  needed: Render + Turso + Gmail is the whole setup. The retention purge
+  deletes the stored bytes along with the booking.
+- `.node-version` pins Node 22 so Render doesn't pick an untested release.
 - **`npm run loadtest`** — seeds a throwaway database at realistic size and at
   100x, drives the real server, and checks every budget in `TECH_STACK.md` §4,
   including the memory of a real server process.

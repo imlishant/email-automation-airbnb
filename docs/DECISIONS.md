@@ -436,3 +436,11 @@ scarce resource is operational surface, not throughput.
 - Whether a repeat guest should be recognised across bookings. Explicitly out of
   scope for now: it would require keeping data past the retention moment, which
   is the opposite of the current direction.
+
+## ID photos live in Turso, not R2 (2026-09-22)
+
+Encrypted ID photos are stored as blobs in the database (`STORAGE_DRIVER=db`).
+Volume is tiny — a few hundred KB per booking, deleted the day after checkout —
+so Turso's free storage covers it with room to spare, and it removes a whole
+account (R2) from the setup. The `s3` driver stays in the code as an option if
+volume ever grows. Files are AES-256-GCM encrypted before they reach Turso.

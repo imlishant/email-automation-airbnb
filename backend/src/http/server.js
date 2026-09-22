@@ -72,7 +72,7 @@ export async function buildServer(config, { logger = true } = {}) {
   // rather than letting a booking read "Sent" with nothing delivered.
   app.decorate("mail", chooseTransport(config));
   // Where encrypted ID documents live, and the key they are encrypted with.
-  app.decorate("files", chooseStore(config));
+
   app.decorate("fileKey", loadKey(config.storage.encryptionKey));
 
   // --- database -----------------------------------------------------------
@@ -88,6 +88,8 @@ export async function buildServer(config, { logger = true } = {}) {
     throw new Error(`refusing to start: admin passcode is not configured (${status.reason})`);
   }
   app.decorate("db", db);
+  // Where encrypted ID documents live. "db" keeps them in the database itself.
+  app.decorate("files", chooseStore(config, { client: db.client }));
   app.addHook("onClose", async () => { try { db.client.close(); } catch { /* already closed */ } });
 
   // --- cookies and rate limiting ------------------------------------------
