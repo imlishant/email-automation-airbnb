@@ -35,13 +35,19 @@ export function tokenLooksValid(token, secret) {
 }
 
 /** The booking's live link, minted on first use. One live link per booking. */
-export async function ensureGuestLink(client, bookingId, secret) {
-  const existing = await one(client,
-    "SELECT token, expires_at FROM guest_links WHERE booking_id = ? AND revoked_at IS NULL", [bookingId]);
-  const booking = await one(client, "SELECT check_out FROM bookings WHERE id = ?", [bookingId]);
+/**
+ * @param known optional { existing, checkOut, settings } already loaded by the
+ *   caller — getBooking fetches all three in its single round trip, so the
+ *   common path here does no reads at all.
+ */
+export async function ensureGuestLink(client, bookingId, secret, known = null) {
+  const existing = known ? known.existing
+    : await one(client, "SELECT token, expires_at FROM guest_links WHERE booking_id = ? AND revoked_at IS NULL", [bookingId]);
+  const booking = known ? { check_out: known.checkOut }
+    : await one(client, "SELECT check_out FROM bookings WHERE id = ?", [bookingId]);
   if (!booking) return null;
 
-  const settings = await appSettings(client);
+  const settings = known ? known.settings : await appSettings(client);
   const expiresAt = new Date(Derive.guestLinkExpiresAt({ checkOut: booking.check_out }, settings)).toISOString();
 
   if (existing && !tokenLooksValid(existing.token, secret)) {

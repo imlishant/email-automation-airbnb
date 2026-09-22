@@ -65,7 +65,6 @@ export async function buildServer(config, { logger = true } = {}) {
     // Coercion is off for the same reason — a body must mean what it says.
     ajv: { customOptions: { removeAdditional: false, coerceTypes: false, useDefaults: true, allErrors: false } },
     bodyLimit: 1024 * 1024,           // JSON only here; uploads get their own route
-    disableRequestLogging: false,
   });
 
   app.decorate("config", config);

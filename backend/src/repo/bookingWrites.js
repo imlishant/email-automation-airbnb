@@ -105,6 +105,7 @@ export async function renamePerson(client, id, personId, name, { actor = "admin"
 
   await transaction(client, async (tx) => {
     await tx.execute({ sql: "UPDATE people SET name = ? WHERE id = ?", args: [next, personId] });
+    await tx.execute({ sql: "UPDATE bookings SET updated_at = ? WHERE id = ?", args: [nowIso(), id] });
     // The lead guest's name is the booking's identifying name; keep the two in
     // step rather than deriving it twice.
     if (person.lead) {

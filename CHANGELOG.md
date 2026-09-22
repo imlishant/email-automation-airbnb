@@ -23,6 +23,9 @@ Security entries are always listed, even when the fix is small.
 ## [Unreleased]
 
 ### Added
+- **`npm run loadtest`** — seeds a throwaway database at realistic size and at
+  100x, drives the real server, and checks every budget in `TECH_STACK.md` §4,
+  including the memory of a real server process.
 - **Owner tier.** The owner signs in with a single-use link emailed to
   `OWNER_EMAIL` — never an address taken from the request — which expires in 15
   minutes and is stored only as a hash. Changing the passcode, editing or
@@ -317,6 +320,17 @@ Security entries are always listed, even when the fix is small.
   to the same screen. The dead modal-based preview it once used went with it.
 
 ### Fixed
+- **The bookings list loaded every booking and every guest on each request.**
+  It then cut one page out in JavaScript, so page 2 cost the same as page 1 and
+  memory grew with the data — to ~400MB at 100x, close to Render's 512MB limit.
+  The docs claimed keyset pagination made cost flat; the code never did. Now it
+  loads one narrow row per booking to decide the order, then full details for
+  the page only: 2x faster, and 100x the data costs ~15MB instead of ~225MB.
+- **The booking detail made 9 database round trips.** Harmless on a local file,
+  ~180ms on Turso against a 90ms budget. Now 2, using `batch()`.
+- **The memory budget had never been measured.** 150MB, against a real baseline
+  of ~172MB. Now 256MB — half of Render's instance — with the reasoning written
+  down.
 - "Society saved" and "Passcode updated" were shown without checking whether
   the save worked, so a network error or an invalid desk address still read as
   success. Both now report the server's actual answer. Found while wiring the

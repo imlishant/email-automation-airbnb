@@ -128,8 +128,10 @@ export async function registerBookings(app) {
     if (!booking) return reply.code(404).send({ error: "not_found" });
     // Minted on first view rather than at sync time: a booking nobody opens
     // never needs a link, and a link that exists is one more thing to leak.
-    const guestLink = await ensureGuestLink(client, booking.id, app.guestSecret);
-    return { ...booking, times: await appSettings(client), guestLink };
+    const { _liveLink, ...rest } = booking;
+    const guestLink = await ensureGuestLink(client, booking.id, app.guestSecret,
+      { existing: _liveLink, checkOut: booking.checkOut, settings: booking.times });
+    return { ...rest, guestLink };
   });
 
   /** Retire the current link and mint a new one, if a link is shared too widely. */

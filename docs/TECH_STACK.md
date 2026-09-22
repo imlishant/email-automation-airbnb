@@ -370,7 +370,7 @@ Numbers to hold, not aspirations. Anything that breaks one of these is a bug.
 | API p95, detail endpoint | **< 90ms** end to end | Point lookups, one round trip. |
 | Queries per request | **≤ 3** | The hop is now the cost. N+1 is a blocking review finding. |
 | Upload, 5MB over 4G | **< 6s, streamed** | Bounded by the network, not by us. |
-| Memory, steady state | **< 150MB RSS** | Fits the smallest useful VM. |
+| Memory, steady state | **< 256MB RSS** | Half of Render's 512MB free instance. Measured: ~172MB at realistic size, ~189MB at 100x. (Originally written as 150MB without measuring; the baseline alone exceeds that.) |
 | Cold start after deploy | **< 1s to first request served** | |
 | Guest page, warm service | **no cold start, ever** | The cron ping keeps the instance above the idle threshold (§2a). |
 
@@ -390,10 +390,22 @@ query returns tens of rows. This is worth more than every other item on this
 list combined, and it is free — it is already the product's behaviour. The
 engineering job is simply never to build a screen that needs the unbounded set.
 
-**2. Keyset pagination, never `OFFSET`.** `OFFSET 10000` makes the database
-walk 10,000 rows it will discard. Paging on `(check_in, id)` with an index
-costs the same at page 1,000 as at page 1. The data layer already works this
-way, so the UI will not have to change:
+**2. Load narrow, then load the page.** *(Corrected after the load test — the
+original text here claimed keyset pagination made cost flat. The code did not
+do that: it loaded every visible booking and every guest on each request and
+cut a page out in JavaScript, and page 2 cost exactly what page 1 did.)*
+
+What it does now, in two round trips at any size: one narrow row per visible
+booking (dates, flags, two counts) so `Derive` can decide visibility, status and
+order without the rule being copied into SQL; then full names and guests for
+**only** the 25 on the page. Measured at 100x data: list p95 45ms → 22ms,
+page 2 40ms → 16ms, and memory growth from ~225MB to ~15MB.
+
+The narrow scan still reads every *visible* booking, so its cost is linear in
+upcoming bookings — tolerable because retention bounds that set (point 1). A
+pure-SQL keyset query would need the status rule in SQL; that trigger is a host
+with thousands of upcoming bookings, not a realistic one. The original sketch,
+kept for reference:
 
 ```sql
 SELECT ... FROM bookings

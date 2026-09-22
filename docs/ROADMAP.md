@@ -262,6 +262,12 @@ Found by using the prototype rather than by planning.
 - [ ] Backups: Turso point-in-time restore plus a nightly SQL dump to R2, and a
       **restore rehearsal** — a backup never restored is a guess. (Replaces the
       Litestream item: the database is Turso, not a local SQLite file.)
-- [ ] Load test at 100x current data to check the budgets in `TECH_STACK.md` §4
+- [x] **Load test** — `npm run loadtest`, 1x against 100x, every budget
+      checked. It found three real problems, all fixed: the booking detail made
+      9 database round trips (now 2, via `batch()`); the list loaded every
+      booking and guest per request (now narrow-then-page — 2x faster, memory
+      growth ~225MB → ~15MB); and the memory budget itself had never been
+      measured (150MB, against a real baseline of ~172MB — now 256MB, half the
+      host).
 - [ ] Adopt Preact + htm **only** if `app.js` passes ~1,500 lines or two screens
       need the same stateful widget
