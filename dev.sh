@@ -21,7 +21,7 @@ fi
 
 echo "GatePass dev server"
 echo "  app     http://localhost:$PORT/"
-echo "  checks  http://localhost:$PORT/frontend/test.html"
+echo "  checks  http://localhost:$PORT/test.html"
 echo "  root    $(pwd)"
 echo "  (ctrl-c to stop)"
 echo

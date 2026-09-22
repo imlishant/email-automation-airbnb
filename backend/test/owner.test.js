@@ -55,10 +55,10 @@ test("only a hash of the link is stored", async () => {
 test("the link signs the owner in once, and then never again", async () => {
   const { url, verify } = await ownerCookie();
   assert.equal(verify.statusCode, 302);
-  assert.equal(verify.headers.location, "/frontend/index.html");
+  assert.equal(verify.headers.location, "/");
 
   const replay = await app.inject({ method: "GET", url: url.replace("http://localhost:8080", "") });
-  assert.equal(replay.headers.location, "/frontend/index.html#owner-link-expired", "single use");
+  assert.equal(replay.headers.location, "/#owner-link-expired", "single use");
   assert.equal(replay.cookies.find((c) => c.name === COOKIE), undefined);
 });
 

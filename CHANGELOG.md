@@ -29,6 +29,9 @@ Security entries are always listed, even when the fix is small.
   needed: Render + Turso + Gmail is the whole setup. The retention purge
   deletes the stored bytes along with the booking.
 - `.node-version` pins Node 22 so Render doesn't pick an untested release.
+- The app loads at the site root (`/`) instead of `/frontend/index.html`; old
+  links redirect. The server now serves only `frontend/` and `shared/` — it
+  previously served the whole repo, including backend source and docs.
 - **`npm run loadtest`** — seeds a throwaway database at realistic size and at
   100x, drives the real server, and checks every budget in `TECH_STACK.md` §4,
   including the memory of a real server process.

@@ -175,11 +175,15 @@ export async function buildServer(config, { logger = true } = {}) {
   // The frontend is served from this same origin, so the session cookie just
   // works and there is no CORS to configure or get wrong.
   if (config.serveFrontend) {
+    // Only frontend/ and shared/ are public. Serving the repo root would hand
+    // out backend source, docs and, on a dev machine, the local database.
     const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-    // wildcard:true serves dynamically. With `false` the plugin globs the
-    // directory at boot, so any file added later 404s until a restart.
-    await app.register(fastifyStatic, { root: repoRoot, prefix: "/", index: false });
-    app.get("/", async (req, reply) => reply.redirect("/frontend/index.html"));
+    await app.register(fastifyStatic, { root: join(repoRoot, "frontend"), prefix: "/" });
+    // The browser resolves js/config.js's ../../shared/rules.js to /shared/rules.js.
+    await app.register(fastifyStatic, { root: join(repoRoot, "shared"), prefix: "/shared/", decorateReply: false });
+    // Guest links shared before the app moved to "/" keep working; the
+    // browser carries the #u/<token> fragment across the redirect.
+    app.get("/frontend/index.html", async (req, reply) => reply.redirect("/"));
   }
 
   for (const w of config.warnings) app.log.warn(w);

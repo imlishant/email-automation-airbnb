@@ -130,11 +130,11 @@ export async function registerAuth(app) {
     schema: { querystring: { type: "object", properties: { token: { type: "string", maxLength: 100 } } } },
   }, async (req, reply) => {
     const res = await consumeOwnerLink(app.db.client, req.query.token);
-    if (!res.ok) return reply.redirect("/frontend/index.html#owner-link-expired");
+    if (!res.ok) return reply.redirect("/#owner-link-expired");
     reply.setCookie(COOKIE, issueSession(app.sessionSecret, { ttlHours: session.ttlHours, role: "owner" }),
       cookieOptions({ production, ttlHours: session.ttlHours }));
     await recordAudit(app.db.client, { kind: "owner", text: "Owner signed in", ip: req.ip });
-    return reply.redirect("/frontend/index.html");
+    return reply.redirect("/");
   });
 
   app.post("/auth/passcode", {

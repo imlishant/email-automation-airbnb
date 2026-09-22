@@ -452,7 +452,7 @@ function bindRename(input, bookingId, person, by, token) {
 // This is a full URL, not a hash fragment appended to whatever page the admin
 // happens to be on, so it survives being pasted into a message.
 function guestLink(b) {
-  return b.guestLink ? `${location.origin}/frontend/index.html#u/${encodeURIComponent(b.guestLink.token)}` : "";
+  return b.guestLink ? `${location.origin}/#u/${encodeURIComponent(b.guestLink.token)}` : "";
 }
 function copyText(text, msg) {
   const done = () => toast(msg);

@@ -21,7 +21,7 @@ Serve from the **repo root**, not this folder — `js/app.js` imports
 ```bash
 cd ..
 python3 -m http.server 5173
-# http://localhost:5173/frontend/index.html
+# http://localhost:5173/
 ```
 
 `file://` does not work any more: the page is an ES module and browsers block

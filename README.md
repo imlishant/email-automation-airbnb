@@ -88,7 +88,7 @@ device.
 ## Checks
 
 ```bash
-open http://localhost:5173/frontend/test.html   # the UI's rules + data layer
+open http://localhost:5173/test.html   # the UI's rules + data layer
 cd backend && npm test                          # shared rules + calendar reader
 ```
 
