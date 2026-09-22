@@ -239,23 +239,26 @@ Found by using the prototype rather than by planning.
       hand-roll when the payload is a passport). Tested against a real SMTP
       sink, not a mock. Production refuses to boot with `SMTP_IGNORE_TLS` set,
       or over SMTP without `MAIL_FROM`.
-- [ ] Scheduler for "1h before check-in"
-- [ ] Trigger for "when all IDs collected"
+- [x] Scheduler for "1h before check-in" — sends with IDs missing (that is the mode's purpose), tells the desk who is still awaited, and does not send with zero IDs
+- [x] Trigger for "when all IDs collected", from the same `Derive.sendDue` the UI uses; at-most-once enforced by a unique index; failures retry up to 5 times and are written to the booking's timeline
 - [x] Manual send and resend
 - [x] Record every send in an activity log
 
 ## Phase 5 — Retention, safety, polish
 
 - [x] Hide bookings 24h after checkout (list rule already in UI)
-- [ ] Scheduled purge at checkout + 24h: ID files, then the booking record,
-      its people and its activity. One instant, nothing retained. Must survive
-      a sleeping process, be idempotent, and fail loudly — it is the only thing
-      between us and holding identity documents indefinitely.
-- [ ] Owner tier: magic-link sign-in to `OWNER_EMAIL`, reusing the SMTP we
-      already have; owner-only passcode change, listing delete and society edit
-      (`DECISIONS.md`, "Admin tiers")
-- [ ] Audit log of admin actions
-- [ ] SSE live updates, replacing any polling
+- [x] **Scheduled purge at checkout + 24h** — files first, then the booking,
+      its people, activity, guest link and jobs. If any file cannot be deleted
+      the row is kept and retried, because an orphaned encrypted file would
+      never be deleted. Runs last in every tick.
+- [x] **Owner tier.** Single-use magic link to `OWNER_EMAIL` only (the request
+      cannot name an address), 15-minute expiry, only a hash stored, 3 requests
+      per 10 minutes. The role is inside the signed session so it cannot be
+      edited client-side. Owner-only: passcode change, society edit/delete,
+      listing disconnect/delete. **Opt-in** — with no `OWNER_EMAIL` every admin
+      can do everything, so the host is never locked out of their own settings.
+- [x] Audit log of admin actions — one table of audited routes, names captured before a delete, no secret ever in the text, lockouts recorded, shown in Settings → Admin access
+- [x] SSE live updates — the stream carries only a booking id, never data; a guest hears only their own booking; verified in a real second browser tab
 - [ ] Backups: Turso point-in-time restore plus a nightly SQL dump to R2, and a
       **restore rehearsal** — a backup never restored is a guess. (Replaces the
       Litestream item: the database is Turso, not a local SQLite file.)

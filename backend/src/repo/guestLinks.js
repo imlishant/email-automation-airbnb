@@ -44,7 +44,11 @@ export async function ensureGuestLink(client, bookingId, secret) {
   const settings = await appSettings(client);
   const expiresAt = new Date(Derive.guestLinkExpiresAt({ checkOut: booking.check_out }, settings)).toISOString();
 
-  if (existing) {
+  if (existing && !tokenLooksValid(existing.token, secret)) {
+    // Signed under a secret that has since changed. Copying it would send the
+    // guest a dead link, so retire it and mint a fresh one.
+    await run(client, "UPDATE guest_links SET revoked_at = ? WHERE token = ?", [nowIso(), existing.token]);
+  } else if (existing) {
     // The window moves if the host changes the check-out time, so keep it current.
     if (existing.expires_at !== expiresAt) {
       await run(client, "UPDATE guest_links SET expires_at = ? WHERE token = ?", [expiresAt, existing.token]);

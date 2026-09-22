@@ -9,6 +9,7 @@ import { query, one, run, newId, nowIso, transaction } from "../db/client.js";
 import { connectListing } from "../ical/connect.js";
 import { findOverlaps } from "../ical/parse.js";
 import { recordSync } from "../repo/listings.js";
+import { listChanged } from "../events.js";
 
 async function logActivity(exec, bookingId, kind, text) {
   await exec.execute({
@@ -141,6 +142,7 @@ export async function syncListing(client, listing, { now = Date.now(), read = co
   }
 
   await recordSync(client, listing.id, { at: nowIso() });
+  if (created || updated || vanished) listChanged();
   return { ok: true, created, updated, conflicts, vanished, reservations: report.reservations.length, notes: report.notes };
 }
 

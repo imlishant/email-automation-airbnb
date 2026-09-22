@@ -131,7 +131,7 @@ async function peopleFor(client, bookingIds) {
     FROM people p
     LEFT JOIN documents d ON d.person_id = p.id
     WHERE p.booking_id IN (${placeholders})
-    ORDER BY p.is_lead DESC, p.created_at, p.id`, bookingIds);
+    ORDER BY p.is_lead DESC, p.rowid`, bookingIds);
   for (const r of rows) {
     if (!map.has(r.booking_id)) map.set(r.booking_id, []);
     map.get(r.booking_id).push(shapePerson(r));

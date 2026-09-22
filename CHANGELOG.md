@@ -23,6 +23,29 @@ Security entries are always listed, even when the fix is small.
 ## [Unreleased]
 
 ### Added
+- **Owner tier.** The owner signs in with a single-use link emailed to
+  `OWNER_EMAIL` — never an address taken from the request — which expires in 15
+  minutes and is stored only as a hash. Changing the passcode, editing or
+  deleting a society, and disconnecting or deleting a listing become owner-only.
+  Opt-in: with no `OWNER_EMAIL`, every admin can still do everything.
+- **Live updates.** Open tabs refresh themselves when a booking changes, over
+  SSE. The stream carries only a booking id — never a name or a document — and
+  each client re-fetches through the normal API; a guest's stream hears only
+  about their own booking. Verified in a real second browser tab: the guest link
+  showed 2 adults, the admin set 3 from elsewhere, the guest tab showed 3 with no
+  reload.
+- **Admin audit trail** in Settings → Admin access: configuration changes,
+  passcode changes and lockouts, with the address each came from.
+- **Automatic sending and the retention purge.** The tick now syncs, sends what
+  is due, then purges what has expired. "When all IDs are collected" fires on
+  the last upload; "1 hour before check-in" fires on the clock with whatever has
+  arrived and tells the desk who is still awaited (never with zero IDs).
+  At-most-once is a unique index; failures retry up to five times and are
+  written to the booking's timeline. The purge deletes files before rows, so a
+  failed file delete keeps the row and retries instead of orphaning an
+  encrypted ID forever.
+- `npm run demo` fills a local database for clicking through; `npm start`
+  reads `backend/.env`.
 - **The security email actually sends (Phase 4).** SMTP from the host's own
   Gmail via nodemailer, with the stored IDs decrypted into memory at send time
   — never written to disk in the clear — and attached as
@@ -294,6 +317,21 @@ Security entries are always listed, even when the fix is small.
   to the same screen. The dead modal-based preview it once used went with it.
 
 ### Fixed
+- "Society saved" and "Passcode updated" were shown without checking whether
+  the save worked, so a network error or an invalid desk address still read as
+  success. Both now report the server's actual answer. Found while wiring the
+  owner tier, which would have made them lie routinely.
+- **Restarting the server killed every guest link already sent.** The guest
+  signing secret was derived from the session secret, which is generated fresh
+  on each boot when unset — and in production, rotating `SESSION_SECRET` (the
+  documented way to log every admin out) would have killed them too. A code
+  comment claimed the two were independent; they were not. Now
+  `GUEST_TOKEN_SECRET` is its own setting, required in production, and a link
+  that no longer verifies is replaced rather than handed to the admin to copy.
+- **Guests on a booking could shuffle order between page loads.** Like the
+  activity log before it, people inserted in the same millisecond tied on
+  `created_at` and fell back to a random id. Now insertion order (`rowid`).
+  Found by chasing a test that failed one run in three.
 - **A booking's activity log could display out of order.** Rows written in the
   same millisecond tied on timestamp and fell back to `id DESC`, which is not
   monotonic. Now ordered by SQLite's `rowid`, which is. Found because a test

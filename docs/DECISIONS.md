@@ -225,8 +225,11 @@ Airbnb with Google, but it needs an OAuth app, a consent screen and a
 dependency, to identify one person we already know the email address of. A
 magic link to a known address is the same guarantee with none of that.
 
-**Not built.** Nothing depends on it, so it sits in Phase 5. Until then the
-shared passcode is the only door.
+**Built, and opt-in.** Set `OWNER_EMAIL` to turn it on; unset, every admin can
+do everything — otherwise the host would be locked out of their own settings
+until email was configured. In development the link is printed to the server
+log (the recording transport sends nothing); in production it never is, because
+a link is a credential.
 
 ## Airbnb access (settled — there is no API)
 

@@ -13,6 +13,7 @@ import { one, run, query, newId, nowIso, transaction } from "../db/client.js";
 import { getBooking, appSettings } from "./bookings.js";
 import { Derive, fillTemplate } from "../../../shared/rules.js";
 import { buildAttachments, AttachmentsUnavailable } from "../mail/attachments.js";
+import { bookingChanged } from "../events.js";
 
 const MAX_ADULTS = 30;
 
@@ -32,7 +33,7 @@ async function loadForRules(client, id) {
   const people = await query(client, `
     SELECT p.id, p.name, p.is_lead, d.doc_type, d.file_ref, d.content_type
     FROM people p LEFT JOIN documents d ON d.person_id = p.id
-    WHERE p.booking_id = ? ORDER BY p.is_lead DESC, p.created_at, p.id`, [id]);
+    WHERE p.booking_id = ? ORDER BY p.is_lead DESC, p.rowid`, [id]);
   return {
     id: row.id, code: row.airbnb_code, listingId: row.listing_id, listingName: row.listing_name,
     checkIn: row.check_in, checkOut: row.check_out, children: Number(row.children || 0),
@@ -86,6 +87,7 @@ export async function setAdultCount(client, id, count, { actor = "admin" } = {})
   });
 
   const after = await loadForRules(client, id);
+  bookingChanged(id);
   return { ok: true, adults: after.people.length, blocked };
 }
 
@@ -118,6 +120,7 @@ export async function renamePerson(client, id, personId, name, { actor = "admin"
         : `${person.name} renamed to ${next}${actor === "guest" ? " (guest)" : ""}`,
     });
   });
+  bookingChanged(id);
   return { ok: true, changed: true };
 }
 
@@ -156,6 +159,7 @@ export async function putDocument(client, id, personId, { docType, fileRef = nul
     });
     await tx.execute({ sql: "UPDATE bookings SET updated_at = ? WHERE id = ?", args: [nowIso(), id] });
   });
+  bookingChanged(id);
   return { ok: true, replaced: replacing };
 }
 
@@ -174,6 +178,7 @@ export async function removeDocument(client, id, personId, { actor = "admin" } =
     });
     await tx.execute({ sql: "UPDATE bookings SET updated_at = ? WHERE id = ?", args: [nowIso(), id] });
   });
+  bookingChanged(id);
   return { ok: true };
 }
 
@@ -189,6 +194,7 @@ export async function setAutomation(client, id, mode, { actor = "admin" } = {}) 
       text: mode === "before" ? "Auto-send set to 1 hour before check-in" : "Auto-send set to when all IDs are collected",
     });
   });
+  bookingChanged(id);
   return { ok: true, changed: true };
 }
 
@@ -294,6 +300,7 @@ export async function sendBooking(client, id, transport, { actor = "admin", auto
     });
   });
 
+  bookingChanged(id);
   return { ok: true, resend, to, cc, delivery, attachments: built.attachments.length, totalBytes: built.totalBytes };
 }
 

@@ -20,6 +20,10 @@ import { registerBookingActions } from "./routes/booking-actions.js";
 import { chooseTransport } from "../mail/transport.js";
 import { registerGuest } from "./routes/guest.js";
 import { registerJobs } from "./routes/jobs.js";
+import { registerAudit } from "./audit.js";
+import { registerEvents } from "./routes/events.js";
+import { listAudit } from "../repo/audit.js";
+import { requireAdmin } from "./routes/auth.js";
 import { registerUploads, registerGuestUploads } from "./routes/uploads.js";
 import multipart from "@fastify/multipart";
 import { chooseStore } from "../files/store.js";
@@ -91,9 +95,10 @@ export async function buildServer(config, { logger = true } = {}) {
   const secret = config.session.secret || ephemeralSecret();
   await app.register(cookie, { secret });
   app.decorate("sessionSecret", secret);
-  // Separate from the session secret: rotating one must not invalidate the
-  // other. Rotating this one kills every outstanding guest link.
-  app.decorate("guestSecret", config.session.guestSecret || secret + ".guest");
+  // Genuinely independent of the session secret. (It used to be derived from
+  // it, which meant rotating SESSION_SECRET — the documented emergency control —
+  // silently killed every guest link too.)
+  app.decorate("guestSecret", config.guestSecret || ephemeralSecret());
 
   // The HTTP half of the brute-force defence; the other half is the account
   // lockout in src/auth/admin.js.
@@ -142,6 +147,8 @@ export async function buildServer(config, { logger = true } = {}) {
     return reply.code(status).send({ error: err.error || err.code || "bad_request", message: err.message });
   });
 
+  registerAudit(app);
+
   // --- routes -------------------------------------------------------------
   await app.register(registerHealth);
   await app.register(registerAuth, { prefix: "/api" });
@@ -149,11 +156,19 @@ export async function buildServer(config, { logger = true } = {}) {
   await app.register(registerBookings, { prefix: "/api" });
   await app.register(registerBookingActions, { prefix: "/api" });
   await app.register(registerJobs, { prefix: "/api" });
+  app.get("/api/audit", {
+    onRequest: requireAdmin(app),
+    schema: {
+      querystring: { type: "object", additionalProperties: false,
+        properties: { before: { type: "string", maxLength: 40 } } },
+    },
+  }, async (req) => ({ rows: await listAudit(app.db.client, { before: req.query.before || null }) }));
   await app.register(multipart, {
     limits: { fileSize: config.storage.maxBytes, files: 1, fields: 4 },
   });
   await app.register(registerUploads, { prefix: "/api" });
   await app.register(registerGuestUploads);   // /u/:token/... — no prefix
+  await app.register(registerEvents);
   await app.register(registerGuest);   // /u/:token — no prefix, it is a link people paste
 
   // The frontend is served from this same origin, so the session cookie just

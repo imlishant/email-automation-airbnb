@@ -15,24 +15,33 @@ const b64u = (buf) => Buffer.from(buf).toString("base64url");
 const sign = (payload, secret) => b64u(createHmac("sha256", secret).update(payload).digest());
 
 /** "<issuedAt>.<expiresAt>.<signature>" */
-export function issueSession(secret, { ttlHours, now = Date.now() } = {}) {
+/**
+ * "<issuedAt>.<expiresAt>.<role>.<signature>". The role is inside the signed
+ * payload, so it cannot be edited from "admin" to "owner" by the client.
+ */
+export function issueSession(secret, { ttlHours, role = "admin", now = Date.now() } = {}) {
   const expires = now + ttlHours * 3600_000;
-  const payload = `${now}.${expires}`;
+  const payload = `${now}.${expires}.${role}`;
   return `${payload}.${sign(payload, secret)}`;
 }
 
 export function verifySession(token, secret, { now = Date.now() } = {}) {
   if (typeof token !== "string") return { ok: false };
   const parts = token.split(".");
-  if (parts.length !== 3) return { ok: false };
-  const [issued, expires, sig] = parts;
+  // Three parts is the pre-owner format; it can only ever mean "admin".
+  if (parts.length !== 3 && parts.length !== 4) return { ok: false };
+  const [issued, expires] = parts;
+  const role = parts.length === 4 ? parts[2] : "admin";
+  const sig = parts[parts.length - 1];
   if (!/^\d+$/.test(issued) || !/^\d+$/.test(expires)) return { ok: false };
+  if (role !== "admin" && role !== "owner") return { ok: false };
 
-  const expected = sign(`${issued}.${expires}`, secret);
+  const payload = parts.length === 4 ? `${issued}.${expires}.${role}` : `${issued}.${expires}`;
+  const expected = sign(payload, secret);
   const a = Buffer.from(sig), b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return { ok: false };
   if (now > Number(expires)) return { ok: false, expired: true };
-  return { ok: true, issuedAt: Number(issued), expiresAt: Number(expires) };
+  return { ok: true, role, issuedAt: Number(issued), expiresAt: Number(expires) };
 }
 
 export function cookieOptions({ production, ttlHours }) {

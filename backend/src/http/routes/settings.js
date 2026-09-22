@@ -5,7 +5,7 @@
 // reads it, and reports what it found, BEFORE anything is saved. Connecting a
 // listing should not be an act of faith.
 // ---------------------------------------------------------------------------
-import { requireAdmin } from "./auth.js";
+import { requireAdmin, requireOwner } from "./auth.js";
 import { one, run, nowIso } from "../../db/client.js";
 import { connectListing, validateIcalUrl } from "../../ical/connect.js";
 import { IcalFetchError } from "../../ical/fetch.js";
@@ -46,6 +46,7 @@ const errorOut = {
 
 export async function registerSettings(app) {
   const admin = requireAdmin(app);
+  const owner = requireOwner(app);
   const client = app.db.client;
 
   // --- the global check-in / check-out times ------------------------------
@@ -101,7 +102,7 @@ export async function registerSettings(app) {
   }, async (req, reply) => reply.code(201).send(await createSociety(client, req.body)));
 
   app.patch("/societies/:id", {
-    onRequest: admin,
+    onRequest: owner,
     schema: {
       params: { type: "object", required: ["id"], properties: { id: str(64) } },
       body: {
@@ -119,7 +120,7 @@ export async function registerSettings(app) {
   });
 
   app.delete("/societies/:id", {
-    onRequest: admin,
+    onRequest: owner,
     schema: {
       params: { type: "object", required: ["id"], properties: { id: str(64) } },
       response: { 200: { type: "object", properties: { ok: { type: "boolean" } } }, 409: errorOut, 404: errorOut },
@@ -259,7 +260,7 @@ export async function registerSettings(app) {
   }, async (req) => listingUsage(client, req.params.id));
 
   app.post("/listings/:id/disconnect", {
-    onRequest: admin,
+    onRequest: owner,
     schema: {
       params: { type: "object", required: ["id"], properties: { id: str(64) } },
       response: { 200: listingOut, 404: errorOut },
@@ -272,7 +273,7 @@ export async function registerSettings(app) {
   });
 
   app.delete("/listings/:id", {
-    onRequest: admin,
+    onRequest: owner,
     schema: {
       params: { type: "object", required: ["id"], properties: { id: str(64) } },
       response: { 200: { type: "object", properties: { ok: { type: "boolean" } } }, 409: errorOut, 404: errorOut },

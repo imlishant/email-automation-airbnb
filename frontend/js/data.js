@@ -77,6 +77,10 @@ const Data = {
     }
   },
   async lock() { return request("/auth/lock", { method: "POST", body: {} }); },
+  async requestOwnerLink() {
+    try { return { ok: true, ...(await request("/auth/owner/request", { method: "POST", body: {} })) }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  },
   async setPasscode(next) {
     try {
       await request("/auth/passcode", { method: "POST", body: { next } });
@@ -89,6 +93,8 @@ const Data = {
   // The server never reveals the passcode, by design — it only ever stores a
   // hash. The old prototype displayed it; that is gone and cannot come back.
   async passcode() { return { value: null }; },
+
+  async audit() { return (await request("/audit")).rows; },
 
   // --- settings -----------------------------------------------------------
   async settings() { return { ...times }; },

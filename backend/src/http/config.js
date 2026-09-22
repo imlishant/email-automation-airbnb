@@ -20,6 +20,12 @@ export function loadConfig(env = process.env) {
     database: { url: env.DATABASE_URL || "file:./data/gatepass.db", authToken: env.DATABASE_AUTH_TOKEN || null },
     auth: policyFromEnv(env),
     session: { secret: env.SESSION_SECRET || null, ttlHours: num(env.SESSION_TTL_HOURS, 24 * 14) },
+    // Independent of the session secret ON PURPOSE. Rotating SESSION_SECRET is
+    // the emergency "log every admin out" control; it must not also kill every
+    // guest link already sent to people standing at gates.
+    guestSecret: env.GUEST_TOKEN_SECRET || null,
+    // Set this to turn the owner tier on. Unset, every admin can do everything.
+    ownerEmail: (env.OWNER_EMAIL || "").trim() || null,
     jobs: { tickSecret: env.JOBS_TICK_SECRET || null },
     times: {
       checkIn: env.DEFAULT_CHECK_IN_TIME || RULES.defaultCheckInTime,
@@ -30,6 +36,8 @@ export function loadConfig(env = process.env) {
       authPerMinute: num(env.RATE_LIMIT_AUTH_PER_MINUTE, 10),
       guestPerMinute: num(env.RATE_LIMIT_GUEST_PER_MINUTE, 30),
       globalPerMinute: num(env.RATE_LIMIT_GLOBAL_PER_MINUTE, 300),
+      // Each request sends an email, so this one is tight.
+      ownerLinkPer10Min: num(env.RATE_LIMIT_OWNER_LINK_PER_10MIN, 3),
     },
     mail: {
       // "recording" is for tests and local work only; it records instead of
@@ -67,6 +75,9 @@ export function loadConfig(env = process.env) {
   if (production) {
     if (!cfg.session.secret || cfg.session.secret.length < 32) {
       fatal.push("SESSION_SECRET must be set to at least 32 characters in production");
+    }
+    if (!cfg.guestSecret || cfg.guestSecret.length < 32) {
+      fatal.push("GUEST_TOKEN_SECRET must be set to at least 32 characters in production");
     }
     if (!cfg.jobs.tickSecret || cfg.jobs.tickSecret.length < 16) {
       // Without this, a public URL that runs jobs is open to anyone.
@@ -110,7 +121,8 @@ export function loadConfig(env = process.env) {
   if (production && cfg.firstRunPasscode === "0".repeat(cfg.auth.passcodeLength)) {
     warnings.push("the admin passcode is still the first-run default — change it in Settings");
   }
-  if (!production && !cfg.session.secret) warnings.push("SESSION_SECRET not set; using an ephemeral development secret");
+  if (!production && !cfg.session.secret) warnings.push("SESSION_SECRET not set; admin sessions end on restart");
+  if (!production && !cfg.guestSecret) warnings.push("GUEST_TOKEN_SECRET not set; guest links are re-issued after every restart");
   if (cfg.mail.transport === "none") warnings.push("no mail transport configured — sending is refused, not faked");
   if (!cfg.storage.encryptionKey) warnings.push("FILE_ENCRYPTION_KEY not set — uploads will be refused");
 

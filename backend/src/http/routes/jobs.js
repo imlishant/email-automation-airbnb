@@ -12,6 +12,7 @@ import { timingSafeEqual } from "node:crypto";
 import { requireAdmin } from "./auth.js";
 import { syncAllListings, syncListing } from "../../jobs/sync.js";
 import { runDueSends } from "../../jobs/send.js";
+import { purgeExpired } from "../../jobs/purge.js";
 import { getListing } from "../../repo/listings.js";
 
 const syncOut = {
@@ -39,7 +40,7 @@ export async function registerJobs(app) {
     config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
     schema: {
       response: {
-        200: { type: "object", properties: { ok: { type: "boolean" }, ran: { type: "integer" }, sent: { type: "integer" }, skipped: { type: "boolean" } } },
+        200: { type: "object", properties: { ok: { type: "boolean" }, ran: { type: "integer" }, sent: { type: "integer" }, purged: { type: "integer" }, skipped: { type: "boolean" } } },
         401: { type: "object", properties: { error: { type: "string" } } },
       },
     },
@@ -60,7 +61,11 @@ export async function registerJobs(app) {
         files: app.files, fileKey: app.fileKey,
         maxAttachmentBytes: app.config.mail.maxAttachmentBytes,
       }, { log: (m) => req.log.info(m) });
-      return { ok: true, ran: synced.length, sent: sends.filter((s) => s.sent).length, skipped: false };
+      // Last, so a booking is never purged in the same tick it could still have
+      // been sent in.
+      const purged = await purgeExpired(client, { store: app.files, log: (m) => req.log.info(m) });
+      return { ok: true, ran: synced.length, sent: sends.filter((s) => s.sent).length,
+               purged: purged.filter((p) => p.purged).length, skipped: false };
     } finally {
       running = false;
     }

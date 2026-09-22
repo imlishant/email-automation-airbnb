@@ -580,7 +580,7 @@ async function renderSetListings(body, seq) {
       icalUrl: body.querySelector(`#lu_${id}`).value,
       societyId: body.querySelector(`#ls_${id}`).value,
     });
-    if (!res.ok) { toast(LISTING_ERRORS[res.reason] || "Could not save that"); return; }
+    if (!res.ok) { toast(LISTING_ERRORS[res.reason] || res.message || "Could not save that"); return; }
     view.editListing = null; toast("Listing updated"); render();
   });
   body.querySelectorAll("[data-disclst]").forEach((el) => el.onclick = async () => {
@@ -592,7 +592,8 @@ async function renderSetListings(body, seq) {
       warn.textContent = "Bookings already synced stay, along with the record of what was sent to security. No new ones will arrive.";
       return;
     }
-    await Data.disconnectListing(id);
+    const res = await Data.disconnectListing(id);
+    if (!res.ok) { toast(res.message || "Could not disconnect that"); return; }
     view.editListing = null; toast("Listing disconnected"); render();
   });
   body.querySelectorAll("[data-dellst]").forEach((el) => el.onclick = async () => {
@@ -613,7 +614,7 @@ async function renderSetListings(body, seq) {
       return;
     }
     const res = await Data.deleteListing(id);
-    if (!res.ok) { toast(LISTING_ERRORS[res.reason] || "Could not delete that"); return; }
+    if (!res.ok) { toast(LISTING_ERRORS[res.reason] || res.message || "Could not delete that"); return; }
     view.editListing = null; toast("Listing deleted"); render();
   });
 
@@ -657,12 +658,13 @@ async function renderSetSocieties(body, seq) {
   });
   body.querySelectorAll("[data-savesoc]").forEach((el) => el.onclick = async () => {
     const id = el.dataset.savesoc;
-    await Data.saveSociety(id, {
+    const res = await Data.saveSociety(id, {
       to: body.querySelector(`#to_${id}`).value.trim(),
       cc: body.querySelector(`#cc_${id}`).value.trim(),
       template: body.querySelector(`#tpl_${id}`).value,
     });
-    toast("Society saved");
+    // Only claim success on success: this is the address IDs get emailed to.
+    toast(res.ok ? "Society saved" : (res.message || "That was not saved"));
   });
   document.getElementById("addSoc").onclick = () => toast("Name the society, add its desk email and template");
 }
@@ -693,12 +695,29 @@ async function renderSetAccess(body, seq) {
       <div class="desc">Enter a new ${len}-digit code. It takes effect right away.</div>
       <input class="input pinput" id="newpin" inputmode="numeric" maxlength="${len}" autocomplete="off" placeholder="${"•".repeat(len)}">
     </div>
-    <button class="btn primary" id="savepin">Update passcode</button>`;
+    <button class="btn primary" id="savepin">Update passcode</button>
+    <div class="section" style="margin-top:32px">
+      <div class="sechead"><h2>Admin activity</h2></div>
+      <p class="note">Changes to settings, passcode changes and lockouts. The passcode is shared, so
+        each entry shows the address it came from rather than a person.</p>
+      <ul class="log" id="auditlog"><li><span>Loading\u2026</span></li></ul>
+    </div>`;
+  Data.audit().then((rows) => {
+    const el = document.getElementById("auditlog");
+    if (!el || !fresh(seq)) return;
+    el.innerHTML = rows.length
+      ? rows.map((r) => `<li><span class="bud"></span><span class="t">${esc(fmt.stamp(r.at))}</span><span>${esc(r.text)}${r.ip ? ` <span class="idcount">\u00b7 ${esc(r.ip)}</span>` : ""}</span></li>`).join("")
+      : "<li><span>Nothing yet.</span></li>";
+  }).catch(() => {});
   const inp = document.getElementById("newpin");
   inp.oninput = () => { inp.value = inp.value.replace(/\D/g, "").slice(0, len); };
   document.getElementById("savepin").onclick = async () => {
     if (inp.value.length !== len) { toast(`Enter ${len} digits`); return; }
-    await Data.setPasscode(inp.value); toast("Passcode updated"); render();
+    const res = await Data.setPasscode(inp.value);
+    if (!res.ok) { toast(res.reason || "The passcode was not changed"); return; }
+    // Changing it ends this session on the server, so go back to the lock.
+    toast("Passcode updated \u2014 unlock with the new one");
+    unlocked = false; showLock();
   };
 }
 
@@ -714,6 +733,9 @@ function toast(msg) {
 
 // ---------- admin lock ----------
 let unlocked = false;
+// { admin, role, ownerTier } from the server; only it can know, since the
+// session is an HttpOnly cookie.
+let sessionInfo = { admin: false, role: null, ownerTier: false };
 async function showLock(err) {
   clearOverlays();
   const len = CONFIG.auth.passcodeLength;
@@ -725,6 +747,8 @@ async function showLock(err) {
     <div class="pin ${err ? "err" : ""}" id="pin">
       ${Array.from({ length: len }, (_, i) => `<input inputmode="numeric" maxlength="1" autocomplete="off" data-i="${i}" aria-label="Digit ${i + 1}">`).join("")}
     </div>
+    ${sessionInfo.ownerTier ? `<button class="btn sm ownerlink" id="ownerLink">Owner? Email me a sign-in link</button>` : ""}
+    ${location.hash === "#owner-link-expired" ? `<div class="lockhint">That sign-in link has expired or was already used. Ask for a new one.</div>` : ""}
     <div class="lockerr" role="alert">${err ? (err.locked ? "Too many attempts. Try again shortly." : "Wrong passcode. Try again.") : ""}</div>
     ${err && err.locked
       ? `<div class="lockhint">Locked for ${Math.ceil((err.retryAfterSeconds || 60) / 60)} more minute(s).</div>`
@@ -735,6 +759,14 @@ async function showLock(err) {
   <div class="themerow" id="lockTheme"></div>`;
   document.body.appendChild(el);
   mountTheme(el.querySelector("#lockTheme"), false);
+  const ol = el.querySelector("#ownerLink");
+  if (ol) ol.onclick = async () => {
+    ol.disabled = true;
+    const r = await Data.requestOwnerLink();
+    toast(r.message);
+    ol.textContent = r.ok ? "Link sent \u2014 check the owner's inbox" : "Owner? Email me a sign-in link";
+    ol.disabled = r.ok;
+  };
   const inputs = [...el.querySelectorAll(".pin input")];
   inputs[0].focus();
   inputs.forEach((inp, i) => {
@@ -797,6 +829,7 @@ async function showGuest(token) {
   </div>`;
   document.body.appendChild(el);
   mountTheme(el.querySelector("[data-guest-theme]"), false);
+  listenGuest(token);
 
   b.people.forEach((p) => {
     const input = el.querySelector(`[data-rename="${p.id}"]`);
@@ -832,11 +865,12 @@ async function showGuest(token) {
 // ---------- boot ----------
 async function mountApp() {
   clearOverlays();
+  listenAdmin();
   mountTheme(document.getElementById("themerow"), true);
   const profile = await Data.profile();
   const host = document.getElementById("hostchip");
   host.innerHTML = `<div class="av">${esc(initials(profile.name))}</div>
-    <div class="who"><b>${esc(profile.name)}</b><br><span>${esc(profile.role)} · ${esc(fmt.count(profile.listingCount, "listing", "listings"))}</span></div>`;
+    <div class="who"><b>${sessionInfo.role === "owner" ? "Owner" : "Admin"}</b><br><span>${esc(fmt.count(profile.listingCount, "listing", "listings"))}</span></div>`;
   document.querySelectorAll(".nav-btn").forEach((b) => b.onclick = () => { view.screen = b.dataset.nav; render(); });
   render();
 }
@@ -849,7 +883,7 @@ async function boot() {
   if (token) { showGuest(token); return; }
   // The session lives in an HttpOnly cookie, so only the server can say whether
   // this browser holds one.
-  try { unlocked = (await Data.session()).admin; } catch { unlocked = false; }
+  try { sessionInfo = await Data.session(); unlocked = sessionInfo.admin; } catch { unlocked = false; }
   unlocked ? mountApp() : showLock();
 }
 // A 401 mid-session means the cookie expired or the passcode changed. Show the
@@ -860,6 +894,37 @@ setUnauthorisedHandler(() => {
   showLock();
 });
 window.addEventListener("hashchange", () => { const t = guestToken(); if (t) showGuest(t); });
+
+// ---------- live updates ----------
+// One EventSource per tab. The stream says only "booking X changed"; this
+// re-fetches through the normal API. Changes are debounced, so a burst (three
+// uploads, one sync) causes one re-render rather than three.
+let liveSource = null, liveTimer = null, liveFor = null;
+function listenLive(url, onChange) {
+  if (liveSource && liveFor === url) return;
+  liveSource?.close();
+  liveFor = url;
+  try { liveSource = new EventSource(url, { withCredentials: true }); }
+  catch { return; }          // no SSE: the focus-refresh below still works
+  liveSource.addEventListener("change", (e) => {
+    let id = null;
+    try { id = JSON.parse(e.data).bookingId; } catch { /* ignore */ }
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(() => onChange(id), 250);
+  });
+}
+// Never re-render under someone mid-edit.
+const editing = () => document.activeElement?.matches("input,textarea,select");
+function listenAdmin() {
+  listenLive("/api/events", (id) => {
+    if (!unlocked || document.getElementById("guestScreen") || editing()) return;
+    // The list cares about every change; a detail page only about its own.
+    if (view.screen === "bookings" || (view.screen === "detail" && (!id || id === view.bookingId))) render();
+  });
+}
+function listenGuest(token) {
+  listenLive(`/u/${encodeURIComponent(token)}/events`, () => { if (!editing()) showGuest(token); });
+}
 
 // Coming back to a tab re-reads everything. Two surfaces can change the same
 // booking — the admin page and the guest link, often open at once — and a tab
