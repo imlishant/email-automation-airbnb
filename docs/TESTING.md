@@ -99,12 +99,24 @@ still to add:
 Run the sections your change touches. Both themes; the guest flow on a real
 phone, not a resized desktop window.
 
-### Admin lock
-- [ ] Fresh load shows the lock screen, not the app.
-- [ ] `0000` unlocks.
-- [ ] A wrong code shows the error and does **not** shift the layout.
-- [ ] Changing the passcode in Settings → Admin access takes effect on the next
-      lock.
+### Signing in
+- [ ] Fresh load shows the sign-in screen, not the app.
+- [ ] **Sign in with Google** lands on Bookings, and the sidebar names the
+      account and the role (Host or Co-host).
+- [ ] Locally, the development sign-in accepts the demo address and refuses an
+      address nobody approved, with a reason on screen.
+- [ ] **Sign out** returns to the sign-in screen and the session is dead: a
+      reload does not get back in.
+- [ ] A co-host sees the daily work but is told, not silently refused, when an
+      action is the host's alone.
+
+### Sending email (Settings → Sending email)
+- [ ] **Connect with Google** asks only for permission to send, and coming back
+      shows the connected address.
+- [ ] **Send a test email** arrives, and the screen says when it was last
+      tested.
+- [ ] With nothing connected, **Send now** on a booking reports that no Gmail
+      is connected — it never reads as sent.
 
 ### Bookings list
 - [ ] Awaiting and conflict bookings are above ready and sent.

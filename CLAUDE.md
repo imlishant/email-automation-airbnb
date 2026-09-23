@@ -7,8 +7,8 @@ repository. Read this first, then `docs/DECISIONS.md`.
 
 GatePass collects government ID proofs for the adult guests of an Airbnb booking
 and emails them to the correct residential society's security helpdesk — before
-arrival, or the moment the last ID lands. One host, one or more listings, each
-listing in exactly one society.
+arrival, or the moment the last ID lands. A host has one or more listings, each
+listing sits in exactly one society, and one deployment serves many hosts.
 
 It is a small, single-purpose tool. It is not a PMS, not a channel manager, and
 not a general document vault. See `docs/PRODUCT_PRINCIPLES.md` before adding
@@ -20,111 +20,145 @@ anything that looks like a new surface.
 gatepass/
 ├── CLAUDE.md             This file — orientation for agents and contributors.
 ├── README.md             Project overview and how to run.
+├── CHANGELOG.md          What changed. Updated in the same commit as the change.
 ├── docs/                 The written record. See docs/CONTEXT.md for the map.
-├── frontend/             Working prototype: vanilla HTML + CSS + JS, no build.
+├── shared/rules.js       THE rules, imported by both the browser and the server:
+│                         derived status, adult count, every window, the email
+│                         template filler. One definition, never two.
+├── frontend/             Vanilla ES modules, no build step, served by the server.
 │   ├── index.html        Shell markup, fonts, pre-paint theme script.
 │   ├── css/styles.css    All styles, CSS-variable themed, light/dark aware.
 │   ├── js/config.js      Every tunable the product owns. No data.
-│   ├── js/data.js        The data boundary: Derive, the async Data API, and
-│   │                     SEED — the only mock values in the app.
+│   ├── js/data.js        The data boundary: the async `Data` API over fetch.
 │   ├── js/app.js         Rendering and behaviour. No data, no literals.
-│   └── test.html         Runnable checks. Open it in a browser.
-└── backend/              Not built yet. README.md holds the plan; .env.example
-                          holds the config surface.
+│   ├── js/upload.js      Client-side resize and EXIF strip before upload.
+│   └── test.html         In-browser checks. Open /test.html with the server up.
+└── backend/
+    ├── migrations/       Forward-only numbered SQL, 001…008. Never edited once
+    │                     applied; add a new file.
+    ├── src/
+    │   ├── index.js      Boot.
+    │   ├── http/         server.js, config.js (all env, validated at boot),
+    │   │                 session.js, audit.js, routes/ (ten route files).
+    │   ├── repo/         SQL per table. Every function takes the accountId.
+    │   ├── jobs/         sync (iCal) → send → purge, run by the tick.
+    │   ├── mail/         transport boundary, gmail.js (API), smtp.js, account.js.
+    │   ├── files/        encryption, sniffing, receive pipeline, stores.
+    │   ├── ical/         fetch, parse, connect, and a CLI probe.
+    │   ├── auth/google.js  OAuth: sign-in, and connecting a Gmail to send.
+    │   └── db/           client, migrate, demo seeder, migrate CLI.
+    ├── test/             node:test. `fixtures/session.js` signs a test in.
+    └── scripts/loadtest.js   Budgets: round trips, memory, asset size.
 ```
 
-## Current state — read this before you plan anything
+## Current state
 
-- **Frontend**: a working prototype. Real interaction, **mock data only**. Every
-  "send" writes to an in-memory store and shows a toast. No network calls exist.
-  The data layer is already async and API-shaped, so connecting the server is a
-  change to `data.js` alone.
-- **Backend**: **does not exist.** `backend/README.md` is a plan, not code. The
-  data model, API surface, and jobs described there are proposals that Phase 1
-  is meant to confirm or replace.
-- **Tests**: `frontend/test.html` runs real checks on the rules (derived state,
-  retention, pagination, society resolution, template filling, send gating,
-  automation, guest scoping, auth). Rendering and layout are still checked by
-  hand — see `docs/TESTING.md`.
-- **Git**: one commit on `master`. No CI, no dependency manifest, no linter
-  config. Do not claim any of these run; they are not there yet.
+Working and deployed on Render, at `gatepass.paletteandpillows.space`, with
+Turso (SQLite) for data and encrypted ID photos, and an external cron ping
+driving the tick.
 
-If a task assumes a server, a database, or a test runner, say so and either
-build that piece deliberately (following `docs/ROADMAP.md` phase order) or ask.
+- **Many hosts per deployment.** People sign in with Google. Each host has an
+  account holding their listings, societies, times and sending Gmail; co-hosts
+  are invited by address. `PLATFORM_OWNER_EMAIL` is whoever runs the
+  deployment and approves who may start an account.
+- **Email goes out through the Gmail API** from each host's own address, with
+  send-only permission, because Render blocks outbound SMTP.
+- **Tests**: `cd backend && npm test` (206 server tests) plus `/test.html` in a
+  browser (30 checks). `npm run loadtest` holds the performance budgets.
+- **Phases 1–5 are done.** `docs/ROADMAP.md` has what is left, including a
+  backlog raised by the host after first deploy.
 
 ## Working agreements
 
 1. **Decisions live in `docs/DECISIONS.md`.** It is the product's source of
    truth. If your change contradicts it, change that file in the same commit —
    with the reasoning — or don't make the change.
-2. **Follow the phase order in `docs/ROADMAP.md`.** Phases are dependency-ordered,
-   not a wish list. Check items off as they land, in the same commit.
+2. **Follow the phase order in `docs/ROADMAP.md`**, and tick items off in the
+   same commit that lands them.
 3. **No new dependency without a line in `docs/DECISIONS.md`.** The frontend has
-   zero runtime dependencies beyond two Google Fonts. Keep it that way until a
-   dependency earns its place in writing. The backend's budget is about eight
-   (`docs/TECH_STACK.md`).
-4. **Nothing hardcoded.** A value the host owns is data and belongs in
-   `data.js`; a value the product owns is a knob and belongs in `config.js`.
-   If you are about to type a name, an email, a date format, a document type, a
-   retention window or a timing into `app.js` or a stylesheet, it goes in one of
-   those two files instead. Derived values (status, adult count, nights) are
-   computed in `Derive`, never stored.
-5. **No framework in the frontend yet.** The signal to reach for one is
-   `app.js` becoming genuinely unmanageable — and that is a Phase 5 item, not an
-   opportunistic refactor.
-6. **Guest data is personal data.** IDs are Aadhaar, passports, driving licences.
-   Read `docs/SECURITY.md` before touching upload, storage, tokens, email, or
-   retention. Never log an ID, a file path, or a guest token.
-7. **Don't widen guest scope.** The guest page shows one booking and does one
+   zero runtime dependencies beyond two Google Fonts. The backend's budget is
+   about eight (`docs/TECH_STACK.md`); it is at eight.
+4. **Nothing hardcoded.** A value the host owns is data and belongs in the
+   database; a value the product owns is a knob and belongs in `config.js` (or
+   `src/http/config.js` on the server). Derived values — status, adult count,
+   nights, every window — are computed in `shared/rules.js`, never stored.
+5. **One definition of a rule.** If the browser and the server both need it, it
+   goes in `shared/rules.js`. A rule implemented twice is a rule that will
+   disagree with itself.
+6. **Guest data is personal data.** IDs are Aadhaar, passports, driving
+   licences. Read `docs/SECURITY.md` before touching upload, storage, tokens,
+   email, or retention. Never log an ID, a guest token, a cookie, or a
+   credential.
+7. **Never claim a send that did not happen.** `sent_at` is written only after
+   the transport succeeds, and the UI reports the real outcome. A false "Sent"
+   is the failure this product exists to prevent.
+8. **Don't widen guest scope.** The guest page shows one booking and does one
    thing: upload IDs. No sending, no other bookings, no automation controls.
 
 ## Running it
 
 ```bash
-cd frontend
-python3 -m http.server 5173
-# http://localhost:5173
+cd backend
+npm ci
+npm run demo          # a society, two listings, a few bookings (local file DB only)
+npm start             # http://localhost:8080  — serves the API and the pages
 ```
 
-Admin passcode starts at `0000` (Settings → Admin access). The guest view is
-reached by the booking's own guest link — **Copy guest upload link** or **Open
-the guest link** on a booking, which resolves to `#u/<booking-id>` in the
-prototype and to a signed token in Phase 3.
+Locally there is no Google app, so the sign-in screen offers a **development
+sign-in**: type the demo address (`host@example.com`, or whatever `DEMO_EMAIL`
+was) and you are in. It is refused in production, and `DEV_LOGIN=true` there is
+fatal at boot. `backend/.env.example` documents every setting; a real `.env` is
+gitignored and must stay that way.
+
+The guest view is reached by a booking's own guest link — **Copy guest upload
+link** or **Open the guest link** on a booking, which resolves to
+`#u/<signed token>`.
 
 ## Verifying a change
 
-1. Open `frontend/test.html` (or serve the folder and load `/test.html`). The
-   page title shows the score; every line must read PASS. Add a check there for
-   any rule you change.
-2. Then walk the flows you touched, following the checklist in
-   `docs/TESTING.md`, and say in the PR which ones you ran and what you saw.
+1. `cd backend && npm test`. Add a test for any rule you change.
+2. Open `/test.html` with the server running; every line must read PASS.
+3. `npm run loadtest` if you touched a query, a route, or an asset.
+4. Then drive the flows you touched in a real browser — `docs/TESTING.md` has
+   the checklist. Screenshots in headless Chrome need the real-time runner, not
+   `--virtual-time-budget`: an open EventSource stalls virtual time.
 
 Do not report a change as verified on the basis of reading the diff.
 
 ## Conventions in the code as it stands
 
-- `app.js` is organised in banner-commented sections (`// ---------- detail ----------`).
-  Add to the matching section rather than appending at the end.
-- Rendering is full re-render: mutate state, call `render()`. There is no
+- **Every repo function takes the account whose data it may touch**, and the
+  account is part of the SQL rather than a filter applied afterwards. An id
+  belonging to another account returns **404, not 403** — a 403 confirms it
+  exists. `test/accounts.test.js` holds this line; read it before touching
+  scoping.
+- Roles: `owner` is the host (sending Gmail, desk addresses, access,
+  deletions), `admin` is a co-host (the daily work). The role is re-read from
+  the memberships table on each request, never trusted from the cookie.
+- `app.js` is organised in banner-commented sections
+  (`// ---------- detail ----------`). Add to the matching section.
+- Rendering is full re-render: mutate `view`, call `render()`. There is no
   diffing and no component model. Keep it that way for now.
-- Status is **derived**, never stored: see `statusOf()` in
-  [app.js](frontend/js/app.js). `conflict → sent → ready → awaiting`.
-- A booking's society is resolved through its listing (`soc(b)`), never stored
-  on the booking and never inferred from the calendar.
+- Each screen has an address: `#bookings`, `#bookings/<id>`,
+  `#settings/<tab>`, `#u/<token>`. `routeToView` reads it, `syncAddress`
+  writes it.
 - All user-supplied strings go through `esc()` before entering a template
   literal. `esc()` does not escape quotes, so user data never fills an
-  attribute — set it as a property after mounting. See
-  `docs/CODING_STANDARDS.md`.
-- Colours, spacing, and radii come from the CSS variables on `:root`. Never
+  attribute — set it as a property after mounting
+  (`docs/CODING_STANDARDS.md`).
+- Colours, spacing and radii come from the CSS variables on `:root`. Never
   hardcode a hex value in a rule.
-- A `button`, `input`, `textarea`, or `select` does not inherit `color` from the
-  browser. The global reset now sets `color: inherit`; do not undo it, and do
-  not rely on a UA default anywhere.
+- A `button`, `input`, `textarea` or `select` does not inherit `color` from the
+  browser. The global reset sets `color: inherit`; do not undo it.
 - Theme state is `data-theme` on `<html>` plus `localStorage["gatepass.theme"]`,
-  with absent meaning "follow the OS". Read it through `themePref()` and write
-  it through `setTheme()`; never touch the attribute directly.
-- The guest page is reached by the booking's guest link only. There is no
-  preview route, and adding one back needs a decision recorded first.
+  absent meaning "follow the OS". Read it through `themePref()`, write it
+  through `setTheme()`.
+- Live updates carry **only a booking id** over SSE, and the client re-fetches
+  through the normal authenticated API, so the stream can never leak a name or
+  a document.
+- Fastify runs with `removeAdditional: false`: an unknown body field is a 400,
+  not a silent drop. Response schemas also strip unlisted fields — if a new
+  field does not reach the browser, the response schema is why.
 
 ## Document map
 
@@ -132,15 +166,15 @@ Do not report a change as verified on the basis of reading the diff.
 | --- | --- |
 | `docs/CONTEXT.md` | Why this exists, who it serves, the constraints around it. Start here. |
 | `docs/DECISIONS.md` | Every product decision, and the open ones. Source of truth. |
-| `docs/ARCHITECTURE.md` | How the system is put together, now and as planned. |
+| `docs/ARCHITECTURE.md` | How the system is put together. |
 | `docs/PRODUCT_PRINCIPLES.md` | The rules that decide what gets built and what gets refused. |
 | `docs/DESIGN.md` | The visual and interaction system: tokens, components, copy. |
 | `docs/CODING_STANDARDS.md` | How to write code here. |
-| `docs/TESTING.md` | What we test, how, and the manual checklist until there's a runner. |
+| `docs/TESTING.md` | What we test, how, and the manual checklist. |
 | `docs/SECURITY.md` | Threat model, data handling rules, disclosure. |
 | `docs/REVIEW.md` | What a reviewer looks for and what blocks a merge. |
 | `docs/TRIAGE.md` | How bugs and incidents are classified and handled. |
 | `docs/TECH_STACK.md` | The stack, the reasoning, the budgets, and how it stays fast as data grows. |
 | `docs/PROJECT.md` | How work is planned, branched, committed, and shipped. |
-| `docs/ROADMAP.md` | What is done, what is next, in phases. |
+| `docs/ROADMAP.md` | What is done, what is next, and the backlog. |
 | `CHANGELOG.md` | What changed, per release. |

@@ -64,22 +64,25 @@ command and no CORS.
 
 ```bash
 cd backend
-npm install
+npm ci
+npm run demo        # optional: a society, two listings, a few bookings
 npm start
 # open http://localhost:8080
 ```
 
-Migrations run on boot. The admin passcode starts at `0000` — change it in
-Settings → Admin access. The database is `backend/data/gatepass.db` by default.
+Migrations run on boot. The database is `backend/data/gatepass.db` by default.
 
-> There is no static-only mode any more: the frontend calls the API for
-> everything, and `file://` cannot load ES modules. `./dev.sh` still serves the
-> files alone if you only want to look at the markup.
+**Signing in.** People sign in with Google. Locally there is no Google app, so
+the sign-in screen offers a **development sign-in**: type the demo address
+(`host@example.com`, or whatever `DEMO_EMAIL` you seeded with) and you are in.
+That route is refused in production.
 
-Admin passcode in the prototype starts at **0000** (change it in
-Settings → Admin access). To see the guest page, open a booking and use **Copy
-guest upload link** or **Open the guest link** — the same link a real guest
-gets.
+**Sending email.** Each host connects their own Gmail in Settings → Sending
+email → **Connect with Google** (send-only permission). On Render that is the
+only way that works, because Render blocks outbound SMTP.
+
+To see the guest page, open a booking and use **Copy guest upload link** or
+**Open the guest link** — the same link a real guest gets.
 
 Light and dark both work. The **Appearance** control at the bottom of the
 sidebar offers Light / Match system / Dark, and remembers the choice on that
@@ -88,8 +91,10 @@ device.
 ## Checks
 
 ```bash
-open http://localhost:5173/test.html   # the UI's rules + data layer
-cd backend && npm test                          # shared rules + calendar reader
+cd backend && npm test                 # the server suite
+# then, with the server running:
+open http://localhost:8080/test.html   # the in-browser checks
+cd backend && npm run loadtest         # the performance budgets
 ```
 
 No runner and no dependencies either side. The browser page's title shows the
