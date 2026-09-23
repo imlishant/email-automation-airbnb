@@ -92,7 +92,7 @@ export async function buildServer(config, { logger = true } = {}) {
   app.decorate("mailFor", async (accountId) => {
     const own = accountId
       ? await transportForAccount(db.client, accountId, app.fileKey,
-          { maxAttachmentBytes: config.mail.maxAttachmentBytes })
+          { maxAttachmentBytes: config.mail.maxAttachmentBytes, google: config.google })
       : null;
     return own
       ? { transport: own, from: (await readAccountMail(db.client, accountId))?.fromEmail || config.mail.from }

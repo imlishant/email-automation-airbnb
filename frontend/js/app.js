@@ -148,7 +148,7 @@ function mountTheme(host, label) {
 }
 
 // ---------- state ----------
-const view = { screen: "bookings", bookingId: null, listingId: null, tab: "listings", openSoc: null, editListing: null, addSoc: false };
+const view = { screen: "bookings", bookingId: null, listingId: null, tab: "listings", openSoc: null, editListing: null, addSoc: false, mailFlash: null };
 const main = document.getElementById("main");
 
 // Every render awaits data, so a second render can start before the first
@@ -161,7 +161,13 @@ let renderSeq = 0;
 // keep your place: #bookings (home), #bookings/<id>, #settings/<tab>.
 // Guest links stay #u/<token> and are handled separately.
 function routeToView() {
-  const [a, b] = (location.hash || "").replace(/^#\/?/, "").split("/");
+  // The connect flow comes back as "#settings/email?mail=connected". The query
+  // is read here, before render() tidies the address away, and held for the
+  // screen to show once.
+  const raw = (location.hash || "").replace(/^#\/?/, "");
+  const flash = (raw.match(/[?&]mail=([a-z]+)/) || [])[1];
+  if (flash) view.mailFlash = flash;
+  const [a, b] = raw.split("?")[0].split("/");
   if (a === "settings") {
     view.screen = "settings";
     if (TABS.some((t) => t.key === b)) view.tab = b;
@@ -797,25 +803,47 @@ async function renderSetEmail(body, seq) {
   const mail = await Data.mailSettings().catch(() => null);
   if (!fresh(seq)) return;
   const isOwner = sessionInfo.role === "owner";
+  // Set by routeToView when Google sent the browser back here. Shown once.
+  const flash = view.mailFlash;
+  view.mailFlash = null;
+  const FLASH = {
+    connected: "Gmail connected. Send a test email to be sure.",
+    denied: "The permission to send was not granted, so nothing was connected.",
+    failed: "That did not complete. Please try connecting again.",
+  };
+
+  const connected = mail && mail.method === "gmail_api";
   body.innerHTML = `
-    <p class="setnote">Security desks receive the IDs from your own Gmail, so they see mail from the person they deal with. GatePass only sends; it never reads your mail.</p>
+    <p class="setnote">Security desks receive the IDs from your own Gmail, so they see mail from the person they deal with. GatePass is given permission to <b>send only</b> — it can never read your mail.</p>
+    ${flash ? `<div class="banner" role="status">${esc(FLASH[flash] || "")}</div>` : ""}
     ${mail ? `<div class="listing-row" style="flex-direction:column;align-items:stretch;gap:6px">
       <div class="nm">${esc(mail.fromEmail)}</div>
       <div style="color:var(--muted);font-size:12.5px">
+        ${connected ? "Connected with Google." : "Connected with an app password (SMTP)."}
         ${mail.verifiedAt ? `Test email sent ${esc(fmt.stamp(mail.verifiedAt))}.` : "Not tested yet."}
         ${mail.lastError ? `<br><b>Last error:</b> ${esc(mail.lastError)}` : ""}</div>
-      ${isOwner ? `<div style="display:flex;gap:8px;margin-top:8px">
+      ${isOwner ? `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
         <button class="btn primary" id="mailTest">Send a test email</button>
         <button class="btn" id="mailForget">Disconnect</button></div>` : ""}
     </div>` : `<div class="listing-row"><div style="color:var(--muted);font-size:13px">No Gmail connected yet, so nothing can be sent.</div></div>`}
+
     ${isOwner ? `<div class="listing-row" style="flex-direction:column;align-items:stretch;gap:10px;margin-top:14px">
-      <div class="nm">${mail ? "Change the Gmail" : "Connect your Gmail"}</div>
-      <div class="field"><label for="mailFrom">Gmail address</label><input class="input" id="mailFrom" type="email" placeholder="you@gmail.com"></div>
-      <div class="field"><label for="mailPass">App Password</label>
-        <div class="desc">Not your normal password. In your Google Account → Security, turn on 2-Step Verification, then create an App Password and paste the 16 characters here. It is encrypted before it is stored.</div>
-        <input class="input" id="mailPass" type="password" autocomplete="new-password" placeholder="xxxx xxxx xxxx xxxx"></div>
-      <button class="btn primary" id="mailSave" style="align-self:flex-start">Save and test</button>
-    </div>` : `<p class="setnote">Only the host who owns this account can change the sending address.</p>`}`;
+      <div class="nm">${mail ? "Reconnect, or use another Gmail" : "Connect your Gmail"}</div>
+      <div style="color:var(--muted);font-size:12.5px">One tap. Google asks you to allow GatePass to send mail on your behalf; nothing else is requested, and you can withdraw it any time in your Google account.</div>
+      <a class="btn primary" id="mailConnect" href="/api/mail/google/start" style="align-self:flex-start">${mail ? "Reconnect with Google" : "Connect with Google"}</a>
+    </div>
+
+    <details style="margin-top:14px">
+      <summary style="cursor:pointer;color:var(--muted);font-size:12.5px">Advanced: app password instead (SMTP)</summary>
+      <div class="listing-row" style="flex-direction:column;align-items:stretch;gap:10px;margin-top:10px">
+        <div style="color:var(--muted);font-size:12.5px">Only for running GatePass somewhere that allows outgoing SMTP. On Render, SMTP is blocked and this will time out \u2014 use Google above.</div>
+        <div class="field"><label for="mailFrom">Gmail address</label><input class="input" id="mailFrom" type="email" placeholder="you@gmail.com"></div>
+        <div class="field"><label for="mailPass">App Password</label>
+          <div class="desc">Not your normal password. Google Account \u2192 Security \u2192 2-Step Verification \u2192 App passwords. It is encrypted before it is stored.</div>
+          <input class="input" id="mailPass" type="password" autocomplete="new-password" placeholder="xxxx xxxx xxxx xxxx"></div>
+        <button class="btn" id="mailSave" style="align-self:flex-start">Save and test</button>
+      </div>
+    </details>` : `<p class="setnote">Only the host who owns this account can change the sending address.</p>`}`;
   if (!isOwner) return;
 
   const test = async () => {
@@ -829,7 +857,7 @@ async function renderSetEmail(body, seq) {
   const f = document.getElementById("mailForget");
   if (f) f.onclick = async () => {
     const res = await Data.disconnectMail();
-    toast(res.ok ? "Gmail disconnected \u2014 nothing can be sent until another is connected" : res.message);
+    toast(res.ok ? "Disconnected \u2014 nothing can be sent until a Gmail is connected" : res.message);
     render();
   };
   document.getElementById("mailSave").onclick = async () => {

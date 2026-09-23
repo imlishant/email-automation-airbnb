@@ -476,3 +476,30 @@ One deployment now serves many hosts. The shape:
 
 The passcode, the owner magic link and their tables are gone. `admin_auth` and
 `owner_links` remain in the schema, unused, until a later migration drops them.
+
+## Sending through the Gmail API, not SMTP (2026-09-23)
+
+Render blocks outbound SMTP, so `smtp.gmail.com:587` times out from there: the
+host's own Gmail is unreachable by SMTP on the free plan, and no configuration
+changes that. The three ways out were paying Render $7/month, sending from a
+third-party service on our own domain, or using Gmail over HTTPS. We chose the
+last:
+
+- It stays free, and the sender stays the host's own address — which is the
+  point, because the societies already correspond with it.
+- It is ordinary HTTPS on port 443, which nothing blocks.
+- The permission asked for is `gmail.send` **only**. The tool cannot list, read
+  or delete a message, so `SECURITY.md`'s promise — this touches the mailbox
+  solely to send to security desks — is now enforced by Google rather than by
+  our own restraint.
+
+The refresh token is encrypted with `FILE_ENCRYPTION_KEY` like an ID photo; the
+access token lives in memory for an hour. A revoked token reports
+`mail_reconnect` and the host reconnects with one tap. The SMTP path stays in
+the code (migration `008_gmail_api.sql` keeps `method`) for anyone running this
+where SMTP is allowed, and for local work.
+
+**Consequence accepted:** the Google consent screen must be published before
+hosts other than its test users can connect a Gmail. `gmail.send` is a
+sensitive scope, so publishing may require Google's verification once there are
+real users beyond the test list.

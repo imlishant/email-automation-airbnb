@@ -12,7 +12,8 @@ import { signIn } from "./fixtures/session.js";
 import { newHandshake, authUrl, readIdToken } from "../src/auth/google.js";
 import { newId, nowIso, run, one } from "../src/db/client.js";
 import { randomBytes } from "node:crypto";
-import { transportForAccount } from "../src/mail/account.js";
+import { transportForAccount, setGmailApi } from "../src/mail/account.js";
+import { gmailApiTransport, SEND_SCOPE } from "../src/mail/gmail.js";
 import { addDays, toDay } from "../../shared/rules.js";
 
 let dir, app, host, other;
@@ -24,6 +25,7 @@ before(async () => {
   app = await buildServer(loadConfig({
     DATABASE_URL: `file:${join(dir, "t.db")}`, PLATFORM_OWNER_EMAIL: SITE_OWNER,
     FILE_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+    GOOGLE_CLIENT_ID: "test-client.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "test-secret",
     RATE_LIMIT_GLOBAL_PER_MINUTE: "5000", RATE_LIMIT_AUTH_PER_MINUTE: "500",
   }), { logger: false });
   host = await signIn(app, { email: "host@example.com", accountName: "Host listings" });
@@ -231,4 +233,89 @@ test("the callback refuses a state that did not come from this browser", async (
   assert.equal(res.statusCode, 302);
   assert.equal(res.headers.location, "/#signin-failed", "and no session is issued");
   assert.equal(res.cookies.find((c) => c.name === "gp_admin"), undefined);
+});
+
+// --- sending through the Gmail API ----------------------------------------
+
+test("connecting a Gmail asks Google for send-only permission, offline", () => {
+  const hs = newHandshake();
+  const url = new URL(authUrl({ clientId: "cid", redirectUri: "https://x.example/cb", state: hs.state,
+    challenge: hs.challenge, scope: `openid email ${SEND_SCOPE}`, offline: true }));
+  const scope = url.searchParams.get("scope");
+  assert.match(scope, /gmail\.send/);
+  assert.ok(!/gmail\.readonly|mail\.google\.com|gmail\.modify/.test(scope), "no permission to read mail, ever");
+  assert.equal(url.searchParams.get("access_type"), "offline", "so sending keeps working with nobody present");
+  assert.equal(url.searchParams.get("prompt"), "consent");
+});
+
+test("a callback that did not start here connects nothing", async () => {
+  const res = await app.inject({ method: "GET", url: "/api/mail/google/callback?code=abc&state=forged" });
+  assert.equal(res.statusCode, 302);
+  assert.match(res.headers.location, /mail=failed/);
+  assert.equal((await as(host, "GET", "/api/mail")).body, "null");
+});
+
+test("declining the send permission connects nothing, and says so", async () => {
+  const start = await as(host, "GET", "/api/mail/google/start");
+  assert.equal(start.statusCode, 302);
+  const jar = start.cookies.find((c) => c.name === "gp_mailoauth");
+  const state = jar.value.split(".")[0];
+  // Google returns the granted scopes; without gmail.send there is nothing to store.
+  const res = await app.inject({ method: "GET", headers: { cookie: `gp_mailoauth=${jar.value}` },
+    url: `/api/mail/google/callback?code=abc&state=${encodeURIComponent(state)}&scope=openid%20email` });
+  assert.match(res.headers.location, /mail=denied/);
+  assert.equal((await as(host, "GET", "/api/mail")).body, "null");
+});
+
+test("the refresh token is encrypted, and sending goes over HTTPS to Gmail", async () => {
+  await setGmailApi(app.db.client, host.accountId,
+    { fromEmail: "Host@Gmail.com", refreshToken: "1//super-secret-refresh" }, app.fileKey);
+
+  const stored = await one(app.db.client, "SELECT method, from_email, oauth_refresh_enc, smtp_pass_enc FROM account_mail WHERE account_id = ?", [host.accountId]);
+  assert.equal(stored.method, "gmail_api");
+  assert.equal(stored.from_email, "host@gmail.com");
+  assert.equal(stored.smtp_pass_enc, null, "no password is involved at all");
+  assert.ok(!Buffer.from(stored.oauth_refresh_enc).includes("super-secret"), "the token is ciphertext at rest");
+
+  const shown = (await as(host, "GET", "/api/mail")).json();
+  assert.equal(shown.method, "gmail_api");
+  assert.ok(!JSON.stringify(shown).includes("super-secret"), "and is never handed back");
+
+  // A fake Google: one call for the access token, one to send.
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push(String(url));
+    if (String(url).includes("oauth2.googleapis.com/token")) {
+      assert.match(opts.body.toString(), /grant_type=refresh_token/);
+      return new Response(JSON.stringify({ access_token: "at_1", expires_in: 3600 }), { status: 200 });
+    }
+    const sent = JSON.parse(opts.body);
+    const raw = Buffer.from(sent.raw, "base64url").toString("utf8");
+    assert.match(raw, /^From: host@gmail\.com/m);
+    assert.match(raw, /^To: desk@society\.example/m);
+    if (sent.raw && raw.includes("Subject: Guest IDs")) {
+      assert.match(raw, /^Content-Disposition: attachment/m, "the attachment survives the MIME build");
+      assert.match(raw, new RegExp(Buffer.from("jpegbytes").toString("base64")), "and its bytes are in the message");
+    }
+    assert.equal(opts.headers.authorization, "Bearer at_1");
+    return new Response(JSON.stringify({ id: "msg_1" }), { status: 200 });
+  };
+  const transport = gmailApiTransport({ refreshToken: "1//super-secret-refresh", from: "host@gmail.com",
+    clientId: "cid", clientSecret: "sec", fetchImpl });
+  const out = await transport.send({ to: "desk@society.example", subject: "Guest IDs", body: "Attached.",
+    attachments: [{ filename: "Priya Menon - Aadhaar.jpg", content: Buffer.from("jpegbytes"), contentType: "image/jpeg" }] });
+  assert.equal(out.accepted, true);
+  assert.deepEqual(calls.map((u) => new URL(u).host), ["oauth2.googleapis.com", "gmail.googleapis.com"]);
+
+  // The second send reuses the access token rather than fetching another.
+  await transport.send({ to: "desk@society.example", subject: "Again", body: "x", attachments: [] });
+  assert.equal(calls.length, 3);
+});
+
+test("a revoked Gmail is reported as needing reconnection, not as a mystery", async () => {
+  const fetchImpl = async () => new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+  const transport = gmailApiTransport({ refreshToken: "dead", from: "h@gmail.com",
+    clientId: "cid", clientSecret: "sec", fetchImpl });
+  await assert.rejects(transport.send({ to: "d@e.example", subject: "s", body: "b" }),
+    (e) => e.code === "mail_reconnect" && /reconnect/i.test(e.message));
 });

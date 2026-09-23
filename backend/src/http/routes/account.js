@@ -13,8 +13,10 @@
 // ---------------------------------------------------------------------------
 import { requireAdmin, requireOwner, requirePlatformOwner } from "./auth.js";
 import {
-  setAccountMail, readAccountMail, clearAccountMail, recordMailCheck, forgetAccountTransport,
+  setAccountMail, setGmailApi, readAccountMail, clearAccountMail, recordMailCheck, forgetAccountTransport,
 } from "../../mail/account.js";
+import { newHandshake, authUrl, exchangeCode } from "../../auth/google.js";
+import { SEND_SCOPE } from "../../mail/gmail.js";
 import {
   listMembers, inviteMember, listInvites, revokeInvite, removeMember,
   renameAccount, addApproval, removeApproval, listApprovals, normalizeEmail,
@@ -32,6 +34,7 @@ const memberOut = {
 
 export async function registerAccount(app) {
   const client = app.db.client;
+  const { production } = app.config;
   const admin = requireAdmin(app);
   const owner = requireOwner(app);
   const siteOwner = requirePlatformOwner(app);
@@ -123,11 +126,75 @@ export async function registerAccount(app) {
   const mailOut = {
     type: ["object", "null"],
     properties: {
+      // "gmail_api" or "smtp": the UI says which, because the advice when
+      // something fails is different for each.
+      method: { type: "string" },
       fromEmail: { type: "string" }, smtpUser: { type: "string" },
       verifiedAt: { type: ["string", "null"] }, lastError: { type: ["string", "null"] },
       updatedAt: { type: "string" },
     },
   };
+
+  // --- connecting a Gmail through Google -----------------------------------
+  // Render blocks outbound SMTP, so this — plain HTTPS to the Gmail API — is
+  // the way a host's own address actually sends. Send-only permission.
+
+  const CONNECT_COOKIE = "gp_mailoauth";
+  const redirectUri = `${app.config.baseUrl}/api/mail/google/callback`;
+
+  app.get("/mail/google/start", {
+    onRequest: owner,
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    if (!app.config.google.clientId) return reply.code(503).send({ error: "google_not_configured" });
+    if (!app.fileKey) {
+      return reply.code(503).send({ error: "no_key",
+        message: "This server has no encryption key set, so the connection cannot be stored." });
+    }
+    const hs = newHandshake();
+    // The account is inside the signed cookie, not the state parameter, so a
+    // callback cannot be aimed at somebody else's account.
+    reply.setCookie(CONNECT_COOKIE, `${hs.state}.${hs.verifier}.${req.accountId}`, {
+      httpOnly: true, secure: production, sameSite: "lax", path: "/api/mail/google", maxAge: 600,
+    });
+    return reply.redirect(authUrl({
+      clientId: app.config.google.clientId, redirectUri, state: hs.state, challenge: hs.challenge,
+      // offline + consent is what makes Google hand back a refresh token, which
+      // is the whole point: sending must keep working with nobody present.
+      scope: `openid email ${SEND_SCOPE}`, offline: true,
+    }));
+  });
+
+  app.get("/mail/google/callback", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    schema: { querystring: { type: "object", properties: {
+      code: { type: "string", maxLength: 2048 }, state: { type: "string", maxLength: 256 },
+      scope: { type: "string", maxLength: 2048 }, error: { type: "string", maxLength: 256 } } } },
+  }, async (req, reply) => {
+    const done = (why) => {
+      reply.clearCookie(CONNECT_COOKIE, { path: "/api/mail/google" });
+      return reply.redirect(`/#settings/email${why ? `?mail=${why}` : ""}`);
+    };
+    const [state, verifier, accountId] = String(req.cookies?.[CONNECT_COOKIE] || "").split(".");
+    if (!state || !accountId || state !== req.query.state || req.query.error || !req.query.code) return done("failed");
+    // Without the send scope there is nothing to store; Google shows the
+    // permission as a tick box the host can decline.
+    if (!String(req.query.scope || "").includes(SEND_SCOPE)) return done("denied");
+
+    const res = await exchangeCode({
+      code: req.query.code, clientId: app.config.google.clientId, clientSecret: app.config.google.clientSecret,
+      redirectUri, verifier,
+    });
+    if (!res.ok || !res.refreshToken) {
+      req.log.warn({ reason: res.message || "no refresh token" }, "gmail connect failed");
+      return done("failed");
+    }
+    await setGmailApi(app.db.client, accountId,
+      { fromEmail: res.identity.email, refreshToken: res.refreshToken }, app.fileKey);
+    forgetAccountTransport(accountId);
+    req.log.info({ account: accountId }, "gmail connected for sending");
+    return done("connected");
+  });
 
   app.get("/mail", { onRequest: admin, schema: { response: { 200: mailOut } } },
     async (req) => readAccountMail(client, req.accountId));

@@ -25,18 +25,21 @@ export function newHandshake() {
   return { verifier, challenge: b64u(createHash("sha256").update(verifier).digest()), state: b64u(randomBytes(16)) };
 }
 
-export function authUrl({ clientId, redirectUri, state, challenge, loginHint }) {
+export function authUrl({ clientId, redirectUri, state, challenge, loginHint, scope, offline = false }) {
   const p = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: SCOPES,
+    // Sign-in asks for identity only. Connecting a Gmail for sending passes
+    // its own scope, and `offline` to be given a refresh token.
+    scope: scope || SCOPES,
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",
     // Always show the chooser: many hosts have several Google accounts, and
     // silently reusing the wrong one is how people end up in the wrong place.
-    prompt: "select_account",
+    prompt: offline ? "consent" : "select_account",
+    ...(offline ? { access_type: "offline", include_granted_scopes: "true" } : {}),
     ...(loginHint ? { login_hint: loginHint } : {}),
   });
   return `${AUTH_ENDPOINT}?${p}`;
@@ -83,5 +86,7 @@ export async function exchangeCode({ code, clientId, clientSecret, redirectUri, 
   const identity = readIdToken(body.id_token);
   if (!identity) return { ok: false, message: "Google's reply carried no usable identity" };
   if (!identity.emailVerified) return { ok: false, message: "That Google account's email is not verified" };
-  return { ok: true, identity };
+  // Present only on the first consent, and only when offline access was asked
+  // for. The caller decides whether its absence is fatal.
+  return { ok: true, identity, refreshToken: body.refresh_token || null, scope: body.scope || "" };
 }

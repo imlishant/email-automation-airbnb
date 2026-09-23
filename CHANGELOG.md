@@ -24,6 +24,23 @@ Security entries are always listed, even when the fix is small.
 
 ### Added
 
+- **Sending through the Gmail API** (`Settings → Sending email → Connect with
+  Google`). Render blocks outbound SMTP, so app-password sending times out
+  there; this is HTTPS and works, from the host's own address, with send-only
+  permission. Migration `008_gmail_api.sql`. The app-password path stays under
+  "Advanced" for hosts running this where SMTP is allowed.
+- `{{guest_list}}` and `{{guest_names}}` template placeholders, so every adult
+  is named in the body of the email and not only on the attachments. An adult
+  nobody has named yet appears as "(name not given)" rather than being dropped.
+
+### Fixed
+
+- **"Send now" claimed success even when the email failed.** It now reports
+  what actually happened, with the reason in the host's words.
+- The guest upload page squeezed the name, ID type and button onto one line,
+  which wrapped into an unreadable column on a phone. Each person is now a
+  block: name and status above, ID controls below at full width.
+
 - **Many hosts on one deployment.** Sign in with Google; each host gets their
   own account holding their listings, societies, times and sending Gmail, and
   can invite co-hosts by address. The site owner keeps the list of addresses
