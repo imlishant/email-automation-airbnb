@@ -14,7 +14,7 @@ import { newId, nowIso, run, one } from "../src/db/client.js";
 import { attachmentName, buildAttachments, AttachmentsUnavailable } from "../src/mail/attachments.js";
 import { localStore } from "../src/files/store.js";
 import { encrypt, loadKey } from "../src/files/crypto.js";
-import { addDays, toDay } from "../../shared/rules.js";
+import { addDays, toDay, fillTemplate } from "../../shared/rules.js";
 import { signIn } from "./fixtures/session.js";
 let acc;   // the signed-in account every row below belongs to
 
@@ -220,4 +220,18 @@ test("buildAttachments refuses rather than returning a partial set", async () =>
   // With no documents at all there is nothing to send.
   await assert.rejects(buildAttachments([{ id: "p1", name: "X", documentType: null }], { store, key }),
     (e) => e.code === "no_documents");
+});
+
+test("every adult is named in the body, not only on the attachments", async () => {
+  // Societies require the names in the text; an unnamed adult is still listed,
+  // because a list shorter than the adult count reads as a mistake at a gate.
+  const template = "Guests: {{guest_names}}\n\n{{guest_list}}\n\nTotal {{adult_count}}.";
+  const b = {
+    listingName: "Flat 1", code: "HM1", checkIn: "2026-10-01", checkOut: "2026-10-04",
+    people: [{ name: "Viji" }, { name: "Srikant" }, { name: "Lead guest" }],
+  };
+  const body = fillTemplate(template, b, (iso) => iso);
+  assert.match(body, /Guests: Viji, Srikant, \(name not given\)/);
+  assert.match(body, /1\. Viji\n2\. Srikant\n3\. \(name not given\)/);
+  assert.match(body, /Total 3\./);
 });

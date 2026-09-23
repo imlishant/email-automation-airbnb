@@ -343,14 +343,22 @@
   .gcard h2{font-family:"Fraunces",serif;font-weight:600;font-size:clamp(21px,5.6vw,24px);margin:0 0 4px;letter-spacing:-.01em}
   .gcard .gsub{color:var(--muted);font-size:13.5px}
   .gcard .gdates{color:var(--faint);font-size:12.5px;margin-top:2px;margin-bottom:18px}
-  .grow{display:flex;align-items:center;gap:13px;padding:15px 15px;border:1px solid var(--line);border-radius:14px;margin-bottom:10px}
+  /* The name and its status on one line, the ID controls under them: on a
+     phone the four items side by side wrapped "pick the ID type" into a
+     one-word column. */
+  .gcard .ghelp{color:var(--muted);font-size:12.5px;line-height:1.55;margin:-2px 0 14px}
+  .gcard .ghelp .gquiet{color:var(--faint)}
+  .grow{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:15px;border:1px solid var(--line);border-radius:14px;margin-bottom:10px}
+  .grow .ghead{display:flex;align-items:center;gap:13px;min-width:0}
+  .grow .gact{display:flex;align-items:center;gap:10px}
+  .grow .gact .btn{flex:none}
   .grow .av{width:38px;height:38px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;font-weight:600;font-size:13px;flex:none}
   .grow .gi{flex:1;min-width:0}
+  .grow .gs{line-height:1.45}
   .grow .gn{font-weight:600;font-size:15px}
   .grow .gs{font-size:12.5px;color:var(--muted);margin-top:1px}
   .grow .gs.done{color:var(--green);font-weight:600}
-  .grow{flex-wrap:wrap}
-  .grow .docsel{max-width:112px}
+  .grow .docsel{flex:1;min-width:0;max-width:none}
   .grow .btn{padding:9px 16px}
   @media(max-width:360px){.gcard{padding:20px 16px}.grow{padding:13px 12px;gap:10px}}
   .gdone{background:var(--green-soft);color:var(--green);border-radius:13px;padding:14px 16px;font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:9px;margin-top:6px}

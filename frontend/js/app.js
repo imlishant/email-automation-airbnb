@@ -410,7 +410,14 @@ async function renderDetail(seq) {
     await Data.setAutomation(b.id, el.dataset.auto); render();
   });
   const send = document.getElementById("send");
-  if (send) send.onclick = async () => { await Data.send(b.id); toast("Sent to security helpdesk"); render(); };
+  if (send) send.onclick = async () => {
+    send.disabled = true;
+    const res = await Data.send(b.id);
+    // Only claim delivery on delivery: a false "Sent" is the failure this
+    // whole product exists to prevent (docs/PRODUCT_PRINCIPLES.md).
+    toast(res.ok ? `Sent to ${res.to || "the security desk"}` : (SEND_ERRORS[res.reason] || res.message || "It did not send"));
+    render();
+  };
 }
 const EYE = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
 const UP = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>';
@@ -501,6 +508,17 @@ function fallbackCopy(text, done) {
 }
 
 // ---------- settings ----------
+// Why a send did not go out, in the host's words rather than the server's.
+const SEND_ERRORS = {
+  mail_not_configured: "No sending Gmail is connected — Settings \u2192 Sending email",
+  incomplete: "Some adults still have no ID",
+  no_documents: "No IDs have been collected yet",
+  files_deleted: "The ID files were deleted on the retention schedule, so this cannot be resent",
+  window_closed: "This booking is past its ID window",
+  no_society: "This listing has no society, so there is nowhere to send it",
+  not_found: "That booking no longer exists",
+};
+
 const LISTING_ERRORS = {
   no_ical_url: "Paste the Airbnb calendar link first",
   no_name: "Give the listing a name",
@@ -744,8 +762,9 @@ const STARTER_TEMPLATE = `Hello,
 
 Please allow entry for our guests at {{listing}}, {{society}}.
 
-Guest: {{guest_name}}
 Adults: {{adult_count}}
+Guests:
+{{guest_list}}
 Check-in: {{check_in}}
 Check-out: {{check_out}}
 Booking: {{booking_id}}
@@ -1027,18 +1046,17 @@ async function showGuest(token) {
     <div class="banner">Only your booking is shown here. Your IDs go straight to the society's security desk — you don't need an account, and nothing else is sent to you.</div>
     <div class="stepper"><div class="lab">Adults in your party</div>
       <div class="ct"><button data-adj="-1" aria-label="One fewer adult">−</button><span class="n">${Derive.adults(b)}</span><button data-adj="1" aria-label="One more adult">+</button></div></div>
-    <div style="color:var(--faint);font-size:12px;margin:-4px 0 14px">Add a row for every adult, including friends or visitors joining you — each needs their own ID.
-      Put each person's name in, as the security desk needs it to match them at the gate.
-      If a photo came out blurry you can replace it any time before your stay ends.
-      Photos are resized and stripped of location data on your phone before they are sent.</div>
-    ${b.people.map((p) => `<div class="grow"><div class="av">${esc(initials(p.name))}</div>
+    <div class="ghelp">One ID per adult, including friends joining you. Add each person's name — the gate desk
+      matches the name to the ID. You can replace a blurry photo any time before checkout.
+      <span class="gquiet">Photos are resized and stripped of location data on your phone before they are sent.</span></div>
+    ${b.people.map((p) => `<div class="grow"><div class="ghead"><div class="av">${esc(initials(p.name))}</div>
       <div class="gi"><div class="gn">${nameField(p, true)}</div>
-        <div class="gs ${p.documentType ? "done" : ""}">${p.lead ? '<span class="you">You</span> \u00b7 ' : ""}${p.documentType ? `${esc(p.documentType)} uploaded` : "pick the ID type, then add a photo"}</div></div>
-      ${p.documentType
+        <div class="gs ${p.documentType ? "done" : ""}">${p.lead ? '<span class="you">You</span> \u00b7 ' : ""}${p.documentType ? `${esc(p.documentType)} uploaded` : "choose the ID type, then add a photo"}</div></div></div>
+      <div class="gact">${p.documentType
         // No tick alongside Replace: the green "uploaded" line already says
         // it is done, and on a 360px phone the name needs the room.
         ? `${docTypeSelect(p.id, p.documentType)}<button class="btn" data-gup="${esc(p.id)}">Replace</button>${fileInput(p.id)}`
-        : `${docTypeSelect(p.id, CONFIG.documents.types[0])}<button class="btn primary" data-gup="${esc(p.id)}">Add ID</button>${fileInput(p.id)}`}
+        : `${docTypeSelect(p.id, CONFIG.documents.types[0])}<button class="btn primary" data-gup="${esc(p.id)}">Add ID</button>${fileInput(p.id)}`}</div>
     </div>`).join("")}
     ${allIn ? `<div class="gdone"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>All set — your host has your IDs. You can close this page, or replace one above if you need to.</div>` : ""}
     ${unlocked ? `<button class="gback" id="gback">← Back to admin</button>` : ""}

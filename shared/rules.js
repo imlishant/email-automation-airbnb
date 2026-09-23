@@ -205,7 +205,23 @@ export const TEMPLATE_VARS = Object.freeze([
   Object.freeze({ token: "check_out", describe: "check-out date" }),
   Object.freeze({ token: "adult_count", describe: "how many adults" }),
   Object.freeze({ token: "society", describe: "the society's name" }),
+  // Societies usually require every guest named in the body of the email, not
+  // just on the attachments. Two shapes, because a gate desk reading a list of
+  // six wants lines, and a one-line sentence wants commas.
+  Object.freeze({ token: "guest_names", describe: "every adult's name, comma separated" }),
+  Object.freeze({ token: "guest_list", describe: "every adult on its own line, numbered" }),
 ]);
+
+/**
+ * The adults whose names are worth printing. A person nobody has named yet is
+ * still a person the desk must expect, so they are listed as "(name not given)"
+ * rather than silently dropped — a list shorter than the adult count would
+ * read as a mistake at the gate.
+ */
+export function guestNames(b) {
+  return (b.people || []).map((p) => (isPlaceholder(p.name) ? "(name not given)" : p.name));
+}
+const isPlaceholder = (name) => Derive.isPlaceholderName(name);
 
 /**
  * @param formatDay a function turning "YYYY-MM-DD" into display text. The
@@ -222,6 +238,8 @@ export function templateValues(b, formatDay) {
     check_in: day(b.checkIn),
     check_out: day(b.checkOut),
     adult_count: String(Derive.adults(b)),
+    guest_names: guestNames(b).join(", "),
+    guest_list: guestNames(b).map((n, i) => `${i + 1}. ${n}`).join("\n"),
   };
 }
 export function fillTemplate(template, b, formatDay) {
