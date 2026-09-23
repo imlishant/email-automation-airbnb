@@ -8,6 +8,8 @@ import { loadConfig } from "../src/http/config.js";
 import { buildServer } from "../src/http/server.js";
 import { COOKIE } from "../src/http/session.js";
 import { AUDITED_ROUTES } from "../src/http/audit.js";
+import { signIn } from "./fixtures/session.js";
+let acc;   // the signed-in account every row below belongs to
 
 let dir, app, auth;
 const cfg = (d, extra = {}) => loadConfig({ DATABASE_URL: `file:${join(d, "t.db")}`,
@@ -16,8 +18,9 @@ const cfg = (d, extra = {}) => loadConfig({ DATABASE_URL: `file:${join(d, "t.db"
 before(async () => {
   dir = await mkdtemp(join(tmpdir(), "gatepass-audit-"));
   app = await buildServer(cfg(dir), { logger: false });
-  const un = await app.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "0000" } });
-  auth = { cookie: `${COOKIE}=${un.cookies.find((c) => c.name === COOKIE).value}` };
+  const session = await signIn(app);
+  acc = session.accountId;
+  auth = { cookie: session.cookie };
 });
 after(async () => { await app?.close(); await rm(dir, { recursive: true, force: true }); });
 
@@ -52,27 +55,22 @@ test("a refused action is not audited as if it happened", async () => {
   assert.equal((await audit()).length, before);
 });
 
-test("a passcode change is audited without the passcode", async () => {
-  await req("POST", "/api/auth/passcode", { next: "2468" });
-  const rows = await audit();
-  assert.equal(rows[0].text, "Admin passcode changed");
-  assert.ok(!JSON.stringify(rows).includes("2468"), "the new passcode must appear nowhere in the audit");
+test("the log says WHO, because logins are people now", async () => {
+  await req("POST", "/api/societies", { name: "Whodunnit", to: "d@w.example", template: "t" });
+  const row = (await audit())[0];
+  assert.equal(row.text, 'Society "Whodunnit" added');
+  assert.equal(row.by, "host@example.com", "the address they signed in with");
 });
 
-test("a lockout is audited; ordinary wrong guesses are not", async () => {
-  const d = await mkdtemp(join(tmpdir(), "gatepass-audit2-"));
-  const a = await buildServer(cfg(d), { logger: false });
-  try {
-    const bad = () => a.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "9999" } });
-    await bad(); await bad(); await bad();          // the third locks
-    const un = await a.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "0000" } });
-    assert.equal(un.statusCode, 401, "still locked");
-    assert.equal((await a.inject({ method: "GET", url: "/api/audit" })).statusCode, 401, "the audit itself is admin-only");
-    const direct = await a.db.client.execute("SELECT text FROM activity WHERE booking_id IS NULL");
-    const lockouts = direct.rows.filter((r) => /locked/.test(r.text));
-    assert.ok(lockouts.length >= 1, "the lockout is recorded");
-    assert.ok(direct.rows.length <= 2, "individual wrong guesses are counted, not logged");
-  } finally { await a.close(); await rm(d, { recursive: true, force: true }); }
+test("access changes are audited, and one account cannot read another's log", async () => {
+  await req("POST", "/api/members", { email: "cohost@example.com" });
+  assert.equal((await audit())[0].text, "cohost@example.com invited as a co-host");
+
+  // A second host on the same deployment sees only their own entries.
+  const other = await signIn(app, { email: "other@example.com", accountName: "Other listings" });
+  const theirs = await app.inject({ method: "GET", url: "/api/audit", headers: { cookie: other.cookie } });
+  assert.equal(theirs.statusCode, 200);
+  assert.deepEqual(theirs.json().rows, [], "another host's account has its own, empty log");
 });
 
 test("every admin route that changes configuration is in the audit table", async () => {
@@ -80,7 +78,8 @@ test("every admin route that changes configuration is in the audit table", async
   const mutating = [];
   for (const r of ["POST /api/societies", "PATCH /api/societies/:id", "DELETE /api/societies/:id",
                    "POST /api/listings", "PATCH /api/listings/:id", "DELETE /api/listings/:id",
-                   "POST /api/listings/:id/disconnect", "PATCH /api/settings/times", "POST /api/auth/passcode"]) {
+                   "POST /api/listings/:id/disconnect", "PATCH /api/settings/times",
+                   "POST /api/members", "DELETE /api/members/:id", "PUT /api/mail", "DELETE /api/mail"]) {
     if (!AUDITED_ROUTES.includes(r)) mutating.push(r);
   }
   assert.deepEqual(mutating, []);

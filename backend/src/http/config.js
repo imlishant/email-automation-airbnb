@@ -3,7 +3,6 @@
 // boot. A misconfiguration should stop the process with a clear message, not
 // surface as a mysterious 500 three hours later.
 // ---------------------------------------------------------------------------
-import { policyFromEnv } from "../auth/admin.js";
 import { RULES } from "../../../shared/rules.js";
 
 const num = (v, d) => (v && /^\d+$/.test(v) ? Number(v) : d);
@@ -18,20 +17,26 @@ export function loadConfig(env = process.env) {
     baseUrl: (env.APP_BASE_URL || `http://localhost:${num(env.PORT, 8080)}`).replace(/\/$/, ""),
     corsOrigins: (env.CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean),
     database: { url: env.DATABASE_URL || "file:./data/gatepass.db", authToken: env.DATABASE_AUTH_TOKEN || null },
-    auth: policyFromEnv(env),
     session: { secret: env.SESSION_SECRET || null, ttlHours: num(env.SESSION_TTL_HOURS, 24 * 14) },
     // Independent of the session secret ON PURPOSE. Rotating SESSION_SECRET is
     // the emergency "log every admin out" control; it must not also kill every
     // guest link already sent to people standing at gates.
     guestSecret: env.GUEST_TOKEN_SECRET || null,
-    // Set this to turn the owner tier on. Unset, every admin can do everything.
-    ownerEmail: (env.OWNER_EMAIL || "").trim() || null,
+    // The person who runs this deployment: they approve who may start an
+    // account, and they inherit the data from before accounts existed.
+    platformOwnerEmail: (env.PLATFORM_OWNER_EMAIL || env.OWNER_EMAIL || "").trim().toLowerCase() || null,
+    google: {
+      clientId: (env.GOOGLE_CLIENT_ID || "").trim(),
+      clientSecret: (env.GOOGLE_CLIENT_SECRET || "").trim(),
+    },
+    // Development only: sign in by typing an address, with no Google app set
+    // up. Refused in production, where it would be a way past sign-in.
+    devLogin: bool(env.DEV_LOGIN, !production),
     jobs: { tickSecret: env.JOBS_TICK_SECRET || null },
     times: {
       checkIn: env.DEFAULT_CHECK_IN_TIME || RULES.defaultCheckInTime,
       checkOut: env.DEFAULT_CHECK_OUT_TIME || RULES.defaultCheckOutTime,
     },
-    firstRunPasscode: env.ADMIN_FIRST_RUN_PASSCODE || "0".repeat(policyFromEnv(env).passcodeLength),
     rateLimits: {
       authPerMinute: num(env.RATE_LIMIT_AUTH_PER_MINUTE, 10),
       guestPerMinute: num(env.RATE_LIMIT_GUEST_PER_MINUTE, 30),
@@ -100,6 +105,18 @@ export function loadConfig(env = process.env) {
       fatal.push("STORAGE_DRIVER=local loses files on Render (its disk is wiped on restart) — use db");
     }
   }
+  if (production) {
+    // Sign-in is Google's job now; without an app registered, nobody can get in.
+    if (!cfg.google.clientId || !cfg.google.clientSecret) {
+      fatal.push("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in production — sign-in needs them");
+    }
+    if (!cfg.platformOwnerEmail) {
+      fatal.push("PLATFORM_OWNER_EMAIL must be set in production — it says who approves new hosts");
+    }
+    if (cfg.devLogin) {
+      fatal.push("DEV_LOGIN must not be set in production — it would let anyone sign in as anyone");
+    }
+  }
   if (production && cfg.icalAllowPrivateHosts) {
     // A pasted calendar URL that may reach private addresses is an SSRF.
     fatal.push("ICAL_ALLOW_PRIVATE_HOSTS must not be set in production");
@@ -119,9 +136,6 @@ export function loadConfig(env = process.env) {
   if (!/^\d{2}:\d{2}$/.test(cfg.times.checkOut)) fatal.push("DEFAULT_CHECK_OUT_TIME must be HH:MM");
 
   const warnings = [];
-  if (production && cfg.firstRunPasscode === "0".repeat(cfg.auth.passcodeLength)) {
-    warnings.push("the admin passcode is still the first-run default — change it in Settings");
-  }
   if (!production && !cfg.session.secret) warnings.push("SESSION_SECRET not set; admin sessions end on restart");
   if (!production && !cfg.guestSecret) warnings.push("GUEST_TOKEN_SECRET not set; guest links are re-issued after every restart");
   if (cfg.mail.transport === "none") warnings.push("no mail transport configured — sending is refused, not faked");

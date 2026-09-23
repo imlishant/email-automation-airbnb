@@ -46,10 +46,11 @@ export async function registerEvents(app) {
   const client = app.db.client;
 
   app.get("/api/events", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
-    if (!verifySession(req.cookies?.[COOKIE], app.sessionSecret).ok) {
-      return reply.code(401).send({ error: "unauthorised" });
-    }
-    openStream(req, reply, { filter: () => true });
+    const s = verifySession(req.cookies?.[COOKIE], app.sessionSecret);
+    if (!s.ok || !s.accountId) return reply.code(401).send({ error: "unauthorised" });
+    // An event with no account is a broadcast ("something changed"); one with
+    // an account only wakes that account's tabs.
+    openStream(req, reply, { filter: (e) => !e.accountId || e.accountId === s.accountId });
   });
 
   app.get("/u/:token/events", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {

@@ -270,3 +270,23 @@ move.
 **Reporting a vulnerability:** this is a private single-host project with no
 public disclosure process. Contact the maintainer directly and do not open a
 public issue containing details.
+
+
+## Sign-in and per-host isolation (2026-09-23)
+
+- **Identity is Google's.** The app never sees a password and asks only for
+  `openid email profile`. It cannot read anyone's mail, calendar or files. An
+  ID token whose email is unverified is refused.
+- **The session cookie** (HttpOnly, SameSite=Lax, signed) carries the user, the
+  account and the role. The role is still re-read from the memberships table on
+  each request, so the cookie cannot grant access that has been taken away.
+- **Isolation is in SQL, not in the handlers.** Every listing, society,
+  booking, document, activity row and setting is reached through
+  `account_id`, and an id from another account returns 404 rather than 403 — a
+  403 would confirm it exists. `test/accounts.test.js` holds this line.
+- **Each host's Gmail app password** is AES-256-GCM encrypted with
+  `FILE_ENCRYPTION_KEY`, never returned by any endpoint, and never logged. The
+  database alone does not let anyone send mail as a host. Revoking the app
+  password in Google ends it immediately.
+- **No invitation emails.** A co-host is invited by address and matched when
+  they sign in, so the tool never mails anyone except security desks.

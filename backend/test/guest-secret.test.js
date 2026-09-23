@@ -9,6 +9,8 @@ import { buildServer } from "../src/http/server.js";
 import { COOKIE } from "../src/http/session.js";
 import { newId, nowIso, run } from "../src/db/client.js";
 import { addDays, toDay } from "../../shared/rules.js";
+import { signIn } from "./fixtures/session.js";
+let acc;   // the signed-in account every row below belongs to
 
 const GUEST = "g".repeat(40);
 async function server(dir, env) {
@@ -16,17 +18,18 @@ async function server(dir, env) {
     RATE_LIMIT_GLOBAL_PER_MINUTE: "5000", RATE_LIMIT_AUTH_PER_MINUTE: "500", ...env }), { logger: false });
 }
 async function seedAndLink(app) {
+  // A fresh sign-in per server, since these tests restart it with new secrets.
+  acc = (await signIn(app)).accountId;
   const c = app.db.client, soc = newId("soc"), lst = newId("lst"), bkg = newId("bkg");
-  await run(c, `INSERT INTO societies (id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?)`, [soc, "S", "d@x.example", "t", nowIso(), nowIso()]);
-  await run(c, `INSERT INTO listings (id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?)`, [lst, "L", "https://a.example/c.ics", soc, nowIso(), nowIso()]);
+  await run(c, `INSERT INTO societies (id,account_id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`, [soc, acc, "S", "d@x.example", "t", nowIso(), nowIso()]);
+  await run(c, `INSERT INTO listings (id,account_id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`, [lst, acc, "L", "https://a.example/c.ics", soc, nowIso(), nowIso()]);
   await run(c, `INSERT INTO bookings (id,airbnb_code,listing_id,check_in,check_out,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
     [bkg, "HMSECRET01", lst, addDays(toDay(new Date()), 2), addDays(toDay(new Date()), 5), nowIso(), nowIso()]);
   await run(c, `INSERT INTO people (id,booking_id,name,is_lead,created_at) VALUES (?,?,?,1,?)`, [newId("per"), bkg, "Lead guest", nowIso()]);
   return bkg;
 }
 async function linkFor(app, bkg) {
-  const un = await app.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "0000" } });
-  const cookie = `${COOKIE}=${un.cookies.find((k) => k.name === COOKIE).value}`;
+  const { cookie } = await signIn(app);
   return (await app.inject({ method: "GET", url: `/api/bookings/${bkg}`, headers: { cookie } })).json().guestLink.token;
 }
 

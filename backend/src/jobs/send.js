@@ -13,7 +13,7 @@
 // the failure this guards.
 // ---------------------------------------------------------------------------
 import { query, one, run, newId, nowIso } from "../db/client.js";
-import { appSettings } from "../repo/bookings.js";
+import { allAccountTimes } from "../repo/bookings.js";
 import { loadForRules, sendBooking } from "../repo/bookingWrites.js";
 import { Derive } from "../../../shared/rules.js";
 
@@ -27,14 +27,18 @@ const MAX_ATTEMPTS = 5;
  * the browser uses, and it depends on the host's check-in time.
  */
 export async function findDueBookings(client, { now = Date.now() } = {}) {
-  const settings = await appSettings(client);
+  // One account's 2pm is another's 11am, so the times are looked up per
+  // account rather than once for the deployment.
+  const times = await allAccountTimes(client);
   const candidates = await query(client, `
-    SELECT b.id FROM bookings b
+    SELECT b.id, l.account_id FROM bookings b JOIN listings l ON l.id = b.listing_id
     WHERE b.sent_at IS NULL AND b.conflict = 0
       AND b.check_out >= date('now', '-2 day')`);
 
   const due = [];
   for (const row of candidates) {
+    const settings = times.get(row.account_id);
+    if (!settings) continue;
     const booking = await loadForRules(client, row.id);
     if (booking && Derive.sendDue(booking, settings, now)) due.push(booking);
   }
@@ -84,12 +88,15 @@ export async function runDueSends(client, deps, { now = Date.now(), log = () => 
     const claimed = await claim(client, booking.id);
     if (!claimed.ok) { results.push({ booking: booking.id, skipped: claimed.reason }); continue; }
 
-    const res = await sendBooking(client, booking.id, deps.transport, {
+    const mail = deps.mailFor
+      ? await deps.mailFor(booking.accountId)
+      : { transport: deps.transport, from: deps.mailFrom };
+    const res = await sendBooking(client, booking.id, mail.transport, {
       actor: "system", auto: true,
       // Only the scheduled mode may send without every ID; "allids" cannot be
       // due unless the booking is already complete.
       allowIncomplete: booking.automation === "before",
-      mailFrom: deps.mailFrom, files: deps.files, fileKey: deps.fileKey,
+      mailFrom: mail.from, files: deps.files, fileKey: deps.fileKey,
       maxAttachmentBytes: deps.maxAttachmentBytes,
     });
 

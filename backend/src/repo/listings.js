@@ -20,33 +20,37 @@ const SELECT = `
   SELECT l.*, s.name AS society_name
   FROM listings l JOIN societies s ON s.id = l.society_id`;
 
-export async function listListings(client) {
-  return (await query(client, `${SELECT} ORDER BY l.name`)).map(shape);
+// As with societies, the account comes first and is part of every statement:
+// one host must never read or write another host's listings.
+export async function listListings(client, accountId) {
+  return (await query(client, `${SELECT} WHERE l.account_id = ? ORDER BY l.name`, [accountId])).map(shape);
 }
 
-export async function getListing(client, id) {
-  const row = await one(client, `${SELECT} WHERE l.id = ?`, [id]);
+export async function getListing(client, accountId, id) {
+  const row = await one(client, `${SELECT} WHERE l.id = ? AND l.account_id = ?`, [id, accountId]);
   return row ? shape(row) : null;
 }
 
-export async function createListing(client, { name, icalUrl, societyId }) {
-  const society = await one(client, "SELECT id FROM societies WHERE id = ?", [societyId]);
+export async function createListing(client, accountId, { name, icalUrl, societyId }) {
+  // The society must belong to the same account, or a listing could send one
+  // host's guests to another host's security desk.
+  const society = await one(client, "SELECT id FROM societies WHERE id = ? AND account_id = ?", [societyId, accountId]);
   if (!society) return { ok: false, reason: "no_society" };
   const id = newId("lst");
   const at = nowIso();
-  await run(client, `INSERT INTO listings (id,name,ical_url,society_id,created_at,updated_at)
-    VALUES (?,?,?,?,?,?)`, [id, name.trim(), icalUrl.trim(), societyId, at, at]);
-  return { ok: true, listing: await getListing(client, id) };
+  await run(client, `INSERT INTO listings (id,account_id,name,ical_url,society_id,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)`, [id, accountId, name.trim(), icalUrl.trim(), societyId, at, at]);
+  return { ok: true, listing: await getListing(client, accountId, id) };
 }
 
-export async function updateListing(client, id, patch) {
-  const current = await one(client, "SELECT * FROM listings WHERE id = ?", [id]);
+export async function updateListing(client, accountId, id, patch) {
+  const current = await one(client, "SELECT * FROM listings WHERE id = ? AND account_id = ?", [id, accountId]);
   if (!current) return { ok: false, reason: "not_found" };
 
   const sets = [], args = [];
   if (patch.name !== undefined) { sets.push("name = ?"); args.push(patch.name.trim()); }
   if (patch.societyId !== undefined && patch.societyId !== current.society_id) {
-    const society = await one(client, "SELECT id FROM societies WHERE id = ?", [patch.societyId]);
+    const society = await one(client, "SELECT id FROM societies WHERE id = ? AND account_id = ?", [patch.societyId, accountId]);
     if (!society) return { ok: false, reason: "no_society" };
     sets.push("society_id = ?"); args.push(patch.societyId);
   }
@@ -55,10 +59,10 @@ export async function updateListing(client, id, patch) {
     // A different calendar means the old sync state is meaningless.
     sets.push("last_synced_at = NULL", "last_sync_error = NULL");
   }
-  if (!sets.length) return { ok: true, listing: await getListing(client, id) };
-  sets.push("updated_at = ?"); args.push(nowIso(), id);
-  await run(client, `UPDATE listings SET ${sets.join(", ")} WHERE id = ?`, args);
-  return { ok: true, listing: await getListing(client, id) };
+  if (!sets.length) return { ok: true, listing: await getListing(client, accountId, id) };
+  sets.push("updated_at = ?"); args.push(nowIso(), id, accountId);
+  await run(client, `UPDATE listings SET ${sets.join(", ")} WHERE id = ? AND account_id = ?`, args);
+  return { ok: true, listing: await getListing(client, accountId, id) };
 }
 
 /** What a listing is carrying, so the UI can explain a refusal. */
@@ -74,12 +78,12 @@ export async function listingUsage(client, id) {
  * Stop syncing, keep everything. The answer for "I do not rent this place any
  * more" that does not destroy records.
  */
-export async function disconnectListing(client, id) {
+export async function disconnectListing(client, accountId, id) {
   const res = await run(client,
-    "UPDATE listings SET ical_url = '', last_synced_at = NULL, last_sync_error = NULL, updated_at = ? WHERE id = ?",
-    [nowIso(), id]);
+    `UPDATE listings SET ical_url = '', last_synced_at = NULL, last_sync_error = NULL, updated_at = ?
+      WHERE id = ? AND account_id = ?`, [nowIso(), id, accountId]);
   if (!res.rowsAffected) return { ok: false, reason: "not_found" };
-  return { ok: true, listing: await getListing(client, id) };
+  return { ok: true, listing: await getListing(client, accountId, id) };
 }
 
 /**
@@ -87,15 +91,17 @@ export async function disconnectListing(client, id) {
  * would otherwise silently take bookings, people, documents and the activity
  * log with it.
  */
-export async function deleteListing(client, id) {
+export async function deleteListing(client, accountId, id) {
   const usage = await listingUsage(client, id);
   if (usage.total > 0) return { ok: false, reason: "has_bookings", ...usage };
-  const res = await run(client, "DELETE FROM listings WHERE id = ?", [id]);
+  const res = await run(client, "DELETE FROM listings WHERE id = ? AND account_id = ?", [id, accountId]);
   return res.rowsAffected ? { ok: true } : { ok: false, reason: "not_found" };
 }
 
+/** The sync worker owns a listing row directly; it already knows the account. */
 export async function recordSync(client, id, { at = nowIso(), error = null } = {}) {
   await run(client, "UPDATE listings SET last_synced_at = ?, last_sync_error = ?, updated_at = ? WHERE id = ?",
     [error ? null : at, error, nowIso(), id]);
-  return getListing(client, id);
+  const row = await one(client, `${SELECT} WHERE l.id = ?`, [id]);
+  return row ? shape(row) : null;
 }

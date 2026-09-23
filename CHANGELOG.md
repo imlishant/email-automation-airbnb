@@ -24,6 +24,23 @@ Security entries are always listed, even when the fix is small.
 
 ### Added
 
+- **Many hosts on one deployment.** Sign in with Google; each host gets their
+  own account holding their listings, societies, times and sending Gmail, and
+  can invite co-hosts by address. The site owner keeps the list of addresses
+  allowed to start an account. Migration `007_accounts.sql`; existing data is
+  moved into one account and adopted by `PLATFORM_OWNER_EMAIL` at first
+  sign-in.
+- **Each host connects their own Gmail** in Settings → Sending email, with a
+  Gmail App Password stored encrypted and a "send a test email" button that
+  proves it works before a guest's ID depends on it.
+- Settings has new **Sending email** and **Access & activity** tabs; the
+  activity log now names the person who made each change.
+
+### Removed
+
+- The shared 4-digit passcode and the owner magic-link sign-in, replaced by
+  Google accounts. `src/auth/{admin,passcode,owner}.js` are gone.
+
 - **ID photos stored encrypted in the database** (`STORAGE_DRIVER=db`, now the
   production default). Migration `006_file_blobs.sql`. No Cloudflare R2 account
   needed: Render + Turso + Gmail is the whole setup. The retention purge

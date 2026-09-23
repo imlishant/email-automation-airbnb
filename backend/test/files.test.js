@@ -15,6 +15,8 @@ import { sniff, stripJpegMetadata, hasExif } from "../src/files/sniff.js";
 import { receiveDocument, readCapped, UploadRejected } from "../src/files/receive.js";
 import { localStore, newFileRef } from "../src/files/store.js";
 import { addDays, toDay } from "../../shared/rules.js";
+import { signIn } from "./fixtures/session.js";
+let acc;   // the signed-in account every row below belongs to
 
 const KEY = randomBytes(32).toString("base64");
 let dir, app, client, auth, uploads, soc, lst, bkg, lead;
@@ -40,19 +42,20 @@ before(async () => {
     UPLOAD_MAX_BYTES: "20000",
     RATE_LIMIT_GLOBAL_PER_MINUTE: "5000", RATE_LIMIT_AUTH_PER_MINUTE: "500", RATE_LIMIT_GUEST_PER_MINUTE: "500",
   }), { logger: false });
+  const session = await signIn(app);
+  acc = session.accountId;
+  auth = { cookie: session.cookie };
   client = app.db.client;
-  const un = await app.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "0000" } });
-  auth = { cookie: `${COOKIE}=${un.cookies.find((c) => c.name === COOKIE).value}` };
 });
 after(async () => { await app?.close(); await rm(dir, { recursive: true, force: true }); });
 
 beforeEach(async () => {
   for (const t of ["documents", "people", "activity", "bookings", "listings", "societies", "guest_links"]) await run(client, `DELETE FROM ${t}`);
   soc = newId("soc"); lst = newId("lst"); bkg = newId("bkg"); lead = newId("per");
-  await run(client, `INSERT INTO societies (id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?)`,
-    [soc, "Greenwood", "desk@greenwood.example", "Dear {{listing}}", nowIso(), nowIso()]);
-  await run(client, `INSERT INTO listings (id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?)`,
-    [lst, "Sea Breeze", "https://airbnb.com/c.ics", soc, nowIso(), nowIso()]);
+  await run(client, `INSERT INTO societies (id,account_id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
+    [soc, acc, "Greenwood", "desk@greenwood.example", "Dear {{listing}}", nowIso(), nowIso()]);
+  await run(client, `INSERT INTO listings (id,account_id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
+    [lst, acc, "Sea Breeze", "https://airbnb.com/c.ics", soc, nowIso(), nowIso()]);
   await run(client, `INSERT INTO bookings (id,airbnb_code,listing_id,check_in,check_out,children,automation,created_at,updated_at)
     VALUES (?,?,?,?,?,0,'allids',?,?)`, [bkg, "HMFILE0001", lst, addDays(today(), 2), addDays(today(), 5), nowIso(), nowIso()]);
   await run(client, `INSERT INTO people (id,booking_id,name,is_lead,created_at) VALUES (?,?,?,1,?)`, [lead, bkg, "Lead guest", nowIso()]);

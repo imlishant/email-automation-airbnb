@@ -7,7 +7,6 @@
 // ---------------------------------------------------------------------------
 import { openDatabase, query, one } from "./client.js";
 import { migrate, seedFirstRun } from "./migrate.js";
-import { initialisePasscode, authStatus, policyFromEnv } from "../auth/admin.js";
 import { RULES } from "../../../shared/rules.js";
 
 const args = process.argv.slice(2);
@@ -28,32 +27,14 @@ if (args.includes("--status")) {
 const result = await migrate(db, { log: (m) => console.log("  " + m) });
 console.log(result.ran.length ? `applied ${result.ran.length} migration(s)` : "already up to date");
 
-// First-run rows. The passcode is hashed with scrypt; a real hash from the
-// start, so no deployment can ever sit on a placeholder.
-const policy = policyFromEnv();
-const firstRun = process.env.ADMIN_FIRST_RUN_PASSCODE || "0".repeat(policy.passcodeLength);
+// First-run rows: the fallback times. Sign-in is Google's, so there is no
+// passcode to hash and nothing here can leave the server half-configured.
 await seedFirstRun(db, {
-  passcodeHash: "pending",   // replaced immediately below; never left in place
+  passcodeHash: "pending",
   checkInTime: process.env.DEFAULT_CHECK_IN_TIME || RULES.defaultCheckInTime,
   checkOutTime: process.env.DEFAULT_CHECK_OUT_TIME || RULES.defaultCheckOutTime,
 });
-const init = await initialisePasscode(db.client, firstRun, { policy });
-if (!init.ok) {
-  console.error(`\nADMIN_FIRST_RUN_PASSCODE is invalid: ${init.reason}`);
-  process.exit(1);
-}
 
-const auth = await authStatus(db.client);
-if (!auth.configured) {
-  console.error(`\nadmin passcode is NOT configured (${auth.reason}) — refusing to report success`);
-  process.exit(1);
-}
-console.log(`admin     passcode hashed (scrypt), ${policy.passcodeLength} digits, ` +
-  `lockout after ${policy.maxAttempts} attempts`);
-if (firstRun === "0".repeat(policy.passcodeLength) && process.env.NODE_ENV === "production") {
-  console.warn(`\n  WARNING: still on the first-run passcode ${firstRun} in production.` +
-    `\n  Change it in Settings -> Admin access before sharing any guest link.\n`);
-}
 const s = await one(db.client, "SELECT check_in_time, check_out_time FROM app_settings WHERE id = 1");
 console.log(`settings  check-in ${s.check_in_time}  check-out ${s.check_out_time}`);
 

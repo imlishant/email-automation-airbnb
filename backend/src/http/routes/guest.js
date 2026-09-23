@@ -56,6 +56,14 @@ function forGuest(b, times) {
 
 export async function registerGuest(app) {
   const client = app.db.client;
+
+  // The guest holds a token for one booking, so the account comes off that
+  // booking's listing rather than from a session.
+  const guestView = async (id) => {
+    const b = await getBooking(client, id);
+    if (!b) return null;
+    return forGuest(b, await appSettings(client, b.accountId));
+  };
   const secret = app.guestSecret;
 
   /** Resolve the token, or end the request. Never trust an id from the caller. */
@@ -78,9 +86,9 @@ export async function registerGuest(app) {
   }, async (req, reply) => {
     const id = await resolve(req, reply);
     if (!id) return reply;
-    const booking = await getBooking(client, id);
+    const booking = await guestView(id);
     if (!booking) return reply.code(404).send({ error: "link_not_active", message: "This link is no longer active." });
-    return forGuest(booking, await appSettings(client));
+    return booking;
   });
 
   app.post("/u/:token/people", {
@@ -96,7 +104,7 @@ export async function registerGuest(app) {
     if (!id) return reply;
     const res = await setAdultCount(client, id, req.body.adults, { actor: "guest" });
     if (!res.ok) return reply.code(409).send({ error: res.reason, message: "That change could not be made." });
-    return forGuest(await getBooking(client, id), await appSettings(client));
+    return guestView(id);
   });
 
   app.patch("/u/:token/people/:personId", {
@@ -120,7 +128,7 @@ export async function registerGuest(app) {
       const status = res.reason === "no_person" ? 404 : res.reason === "window_closed" ? 409 : 400;
       return reply.code(status).send({ error: res.reason, message: "That name could not be saved." });
     }
-    return forGuest(await getBooking(client, id), await appSettings(client));
+    return guestView(id);
   });
 
   app.put("/u/:token/people/:personId/document", {
@@ -143,6 +151,6 @@ export async function registerGuest(app) {
       const status = res.reason === "no_person" ? 404 : 409;
       return reply.code(status).send({ error: res.reason, message: "That ID could not be saved." });
     }
-    return forGuest(await getBooking(client, id), await appSettings(client));
+    return guestView(id);
   });
 }

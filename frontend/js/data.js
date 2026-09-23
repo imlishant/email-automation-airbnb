@@ -67,34 +67,61 @@ const rememberTimes = (t) => { if (t?.checkInTime) times = t; return t; };
 const Data = {
   // --- session ------------------------------------------------------------
   async session() { return request("/auth/session"); },
-  async unlock(passcode) {
-    try {
-      await request("/auth/unlock", { method: "POST", body: { passcode } });
-      return { ok: true };
-    } catch (e) {
-      if (e.status === 401) {
-        return { ok: false, locked: e.body.error === "locked", retryAfterSeconds: e.body.retryAfterSeconds, attemptsRemaining: e.body.attemptsRemaining };
-      }
-      throw e;
-    }
-  },
   async lock() { return request("/auth/lock", { method: "POST", body: {} }); },
-  async requestOwnerLink() {
-    try { return { ok: true, ...(await request("/auth/owner/request", { method: "POST", body: {} })) }; }
+  /** Development only: sign in by address, with no Google app registered. */
+  async devLogin(email) {
+    try { return { ok: true, ...(await request("/auth/dev-login", { method: "POST", body: { email } })) }; }
     catch (e) { return { ok: false, message: e.message }; }
   },
-  async setPasscode(next) {
-    try {
-      await request("/auth/passcode", { method: "POST", body: { next } });
-      return { ok: true };
-    } catch (e) {
-      // Every failure gets a reason on screen — a silent button is worse than an error.
-      return { ok: false, reason: e.status === 400 ? (e.body.message || "invalid") : e.message };
-    }
+  async switchAccount(accountId) {
+    try { return { ok: true, ...(await request("/auth/switch", { method: "POST", body: { accountId } })) }; }
+    catch (e) { return { ok: false, message: e.message }; }
   },
-  // The server never reveals the passcode, by design — it only ever stores a
-  // hash. The old prototype displayed it; that is gone and cannot come back.
-  async passcode() { return { value: null }; },
+  async renameAccount(name) {
+    try { return { ok: true, account: await request("/account", { method: "PATCH", body: { name } }) }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  },
+
+  // --- who has access -----------------------------------------------------
+  async members() { return request("/members"); },
+  async inviteMember(email) {
+    try { return { ok: true, ...(await request("/members", { method: "POST", body: { email } })) }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  },
+  async removeMember(userId) {
+    try { await request(`/members/${encodeURIComponent(userId)}`, { method: "DELETE" }); return { ok: true }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  },
+  async revokeInvite(id) {
+    try { await request(`/invites/${encodeURIComponent(id)}`, { method: "DELETE" }); return { ok: true }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  },
+
+  // --- the account's sending Gmail ---------------------------------------
+  async mailSettings() { return request("/mail"); },
+  async connectMail({ fromEmail, appPassword }) {
+    try { return { ok: true, mail: await request("/mail", { method: "PUT", body: { fromEmail, appPassword } }) }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  },
+  async disconnectMail() {
+    try { await request("/mail", { method: "DELETE" }); return { ok: true }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  },
+  async testMail() {
+    try { return { ok: true, ...(await request("/mail/test", { method: "POST", body: {} })) }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  },
+
+  // --- who may start an account (the site owner only) --------------------
+  async approvals() { return (await request("/approvals")).rows; },
+  async approve(email, note) {
+    try { return { ok: true, row: await request("/approvals", { method: "POST", body: { email, note } }) }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  },
+  async unapprove(email) {
+    try { await request(`/approvals/${encodeURIComponent(email)}`, { method: "DELETE" }); return { ok: true }; }
+    catch (e) { return { ok: false, message: e.message }; }
+  },
 
   async audit() { return (await request("/audit")).rows; },
 

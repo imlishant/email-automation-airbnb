@@ -57,7 +57,8 @@ export async function registerJobs(app) {
       // it — a reservation made an hour before check-in must not wait.
       const synced = await syncAllListings(client, { log: (m) => req.log.info(m), allowPrivate: app.config.icalAllowPrivateHosts });
       const sends = await runDueSends(client, {
-        transport: app.mail, mailFrom: app.config.mail.from,
+        // Each booking goes out through its own account's Gmail.
+        mailFor: app.mailFor,
         files: app.files, fileKey: app.fileKey,
         maxAttachmentBytes: app.config.mail.maxAttachmentBytes,
       }, { log: (m) => req.log.info(m) });

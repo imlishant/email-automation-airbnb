@@ -14,9 +14,11 @@ import { EventEmitter } from "node:events";
 export const bus = new EventEmitter();
 bus.setMaxListeners(200);   // one per open tab; generous for one host
 
-export function bookingChanged(bookingId) {
-  if (bookingId) bus.emit("change", { bookingId });
+// accountId, when known, keeps the nudge to the host it concerns. Null means
+// "some booking changed somewhere", which is all a broadcast ever reveals.
+export function bookingChanged(bookingId, accountId = null) {
+  if (bookingId) bus.emit("change", { bookingId, accountId });
 }
-export function listChanged() {
-  bus.emit("change", { bookingId: null });
+export function listChanged(accountId = null) {
+  bus.emit("change", { bookingId: null, accountId });
 }

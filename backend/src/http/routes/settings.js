@@ -6,6 +6,7 @@
 // listing should not be an act of faith.
 // ---------------------------------------------------------------------------
 import { requireAdmin, requireOwner } from "./auth.js";
+import { accountTimes, setAccountTimes } from "../../repo/accounts.js";
 import { one, run, nowIso } from "../../db/client.js";
 import { connectListing, validateIcalUrl } from "../../ical/connect.js";
 import { IcalFetchError } from "../../ical/fetch.js";
@@ -54,10 +55,8 @@ export async function registerSettings(app) {
     type: "object",
     properties: { checkInTime: { type: "string" }, checkOutTime: { type: "string" } },
   };
-  app.get("/settings/times", { onRequest: admin, schema: { response: { 200: timeOut } } }, async () => {
-    const row = await one(client, "SELECT check_in_time, check_out_time FROM app_settings WHERE id = 1");
-    return { checkInTime: row.check_in_time, checkOutTime: row.check_out_time };
-  });
+  app.get("/settings/times", { onRequest: admin, schema: { response: { 200: timeOut } } },
+    async (req) => accountTimes(client, req.accountId));
 
   app.patch("/settings/times", {
     onRequest: admin,
@@ -72,23 +71,18 @@ export async function registerSettings(app) {
       response: { 200: timeOut },
     },
   }, async (req) => {
-    const sets = [], args = [];
-    if (req.body.checkInTime) { sets.push("check_in_time = ?"); args.push(req.body.checkInTime); }
-    if (req.body.checkOutTime) { sets.push("check_out_time = ?"); args.push(req.body.checkOutTime); }
-    sets.push("updated_at = ?"); args.push(nowIso());
-    await run(client, `UPDATE app_settings SET ${sets.join(", ")} WHERE id = 1`, args);
-    const row = await one(client, "SELECT check_in_time, check_out_time FROM app_settings WHERE id = 1");
+    const times = await setAccountTimes(client, req.accountId, req.body);
     // Every retention window and the send schedule hang off these, so the
     // change is worth a log line.
-    req.log.info({ times: row }, "check-in/check-out times changed");
-    return { checkInTime: row.check_in_time, checkOutTime: row.check_out_time };
+    req.log.info({ account: req.accountId, times }, "check-in/check-out times changed");
+    return times;
   });
 
   // --- societies ----------------------------------------------------------
   app.get("/societies", {
     onRequest: admin,
     schema: { response: { 200: { type: "array", items: societyOut } } },
-  }, async () => listSocieties(client));
+  }, async (req) => listSocieties(client, req.accountId));
 
   app.post("/societies", {
     onRequest: admin,
@@ -99,7 +93,7 @@ export async function registerSettings(app) {
       },
       response: { 201: societyOut },
     },
-  }, async (req, reply) => reply.code(201).send(await createSociety(client, req.body)));
+  }, async (req, reply) => reply.code(201).send(await createSociety(client, req.accountId, req.body)));
 
   app.patch("/societies/:id", {
     onRequest: owner,
@@ -112,7 +106,7 @@ export async function registerSettings(app) {
       response: { 200: societyOut, 404: errorOut },
     },
   }, async (req, reply) => {
-    const updated = await updateSociety(client, req.params.id, req.body);
+    const updated = await updateSociety(client, req.accountId, req.params.id, req.body);
     if (!updated) return reply.code(404).send({ error: "not_found" });
     // Changing a desk address changes where personal data goes.
     if (req.body.to !== undefined) req.log.info({ society: req.params.id }, "society desk address changed");
@@ -126,7 +120,7 @@ export async function registerSettings(app) {
       response: { 200: { type: "object", properties: { ok: { type: "boolean" } } }, 409: errorOut, 404: errorOut },
     },
   }, async (req, reply) => {
-    const res = await deleteSociety(client, req.params.id);
+    const res = await deleteSociety(client, req.accountId, req.params.id);
     if (res.ok) return { ok: true };
     if (res.reason === "not_found") return reply.code(404).send({ error: "not_found" });
     return reply.code(409).send({
@@ -139,7 +133,7 @@ export async function registerSettings(app) {
   app.get("/listings", {
     onRequest: admin,
     schema: { response: { 200: { type: "array", items: listingOut } } },
-  }, async () => listListings(client));
+  }, async (req) => listListings(client, req.accountId));
 
   /**
    * Read a calendar without saving anything.
@@ -214,7 +208,7 @@ export async function registerSettings(app) {
       if (e instanceof IcalFetchError) return reply.code(400).send({ error: e.code, message: e.message });
       throw e;
     }
-    const res = await createListing(client, req.body);
+    const res = await createListing(client, req.accountId, req.body);
     if (!res.ok) {
       return reply.code(400).send({ error: res.reason, message: "Pick the society this listing sits in." });
     }
@@ -240,7 +234,7 @@ export async function registerSettings(app) {
         throw e;
       }
     }
-    const res = await updateListing(client, req.params.id, req.body);
+    const res = await updateListing(client, req.accountId, req.params.id, req.body);
     if (!res.ok) {
       const status = res.reason === "not_found" ? 404 : 400;
       return reply.code(status).send({ error: res.reason });
@@ -257,7 +251,10 @@ export async function registerSettings(app) {
       params: { type: "object", required: ["id"], properties: { id: str(64) } },
       response: { 200: { type: "object", properties: { total: { type: "integer" }, sent: { type: "integer" } } } },
     },
-  }, async (req) => listingUsage(client, req.params.id));
+  }, async (req, reply) => {
+    if (!await getListing(client, req.accountId, req.params.id)) return reply.code(404).send({ error: "not_found" });
+    return listingUsage(client, req.params.id);
+  });
 
   app.post("/listings/:id/disconnect", {
     onRequest: owner,
@@ -266,7 +263,7 @@ export async function registerSettings(app) {
       response: { 200: listingOut, 404: errorOut },
     },
   }, async (req, reply) => {
-    const res = await disconnectListing(client, req.params.id);
+    const res = await disconnectListing(client, req.accountId, req.params.id);
     if (!res.ok) return reply.code(404).send({ error: res.reason });
     req.log.info({ listing: req.params.id }, "listing disconnected");
     return res.listing;
@@ -279,7 +276,7 @@ export async function registerSettings(app) {
       response: { 200: { type: "object", properties: { ok: { type: "boolean" } } }, 409: errorOut, 404: errorOut },
     },
   }, async (req, reply) => {
-    const res = await deleteListing(client, req.params.id);
+    const res = await deleteListing(client, req.accountId, req.params.id);
     if (res.ok) { req.log.info({ listing: req.params.id }, "listing deleted"); return { ok: true }; }
     if (res.reason === "not_found") return reply.code(404).send({ error: "not_found" });
     return reply.code(409).send({

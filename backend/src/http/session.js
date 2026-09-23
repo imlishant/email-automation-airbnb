@@ -14,34 +14,36 @@ export const COOKIE = "gp_admin";
 const b64u = (buf) => Buffer.from(buf).toString("base64url");
 const sign = (payload, secret) => b64u(createHmac("sha256", secret).update(payload).digest());
 
-/** "<issuedAt>.<expiresAt>.<signature>" */
 /**
- * "<issuedAt>.<expiresAt>.<role>.<signature>". The role is inside the signed
- * payload, so it cannot be edited from "admin" to "owner" by the client.
+ * "v2.<payload>.<signature>", where payload is base64url JSON carrying who is
+ * signed in (`u`, a user id), which account they are working in (`a`) and
+ * their role there (`r`). It is inside the signed payload, so none of it can
+ * be edited in the browser. Stateless still: no sessions table, and rotating
+ * SESSION_SECRET signs everyone out.
  */
-export function issueSession(secret, { ttlHours, role = "admin", now = Date.now() } = {}) {
-  const expires = now + ttlHours * 3600_000;
-  const payload = `${now}.${expires}.${role}`;
-  return `${payload}.${sign(payload, secret)}`;
+export function issueSession(secret, { ttlHours, role = "admin", userId, accountId, email = null, now = Date.now() } = {}) {
+  // The email rides along only so the audit log can say who acted without a
+  // lookup on every request. Authority still comes from the memberships table.
+  const claims = { i: now, e: now + ttlHours * 3600_000, r: role, u: userId || null, a: accountId || null, m: email };
+  const payload = b64u(JSON.stringify(claims));
+  return `v2.${payload}.${sign(payload, secret)}`;
 }
 
 export function verifySession(token, secret, { now = Date.now() } = {}) {
   if (typeof token !== "string") return { ok: false };
   const parts = token.split(".");
-  // Three parts is the pre-owner format; it can only ever mean "admin".
-  if (parts.length !== 3 && parts.length !== 4) return { ok: false };
-  const [issued, expires] = parts;
-  const role = parts.length === 4 ? parts[2] : "admin";
-  const sig = parts[parts.length - 1];
-  if (!/^\d+$/.test(issued) || !/^\d+$/.test(expires)) return { ok: false };
-  if (role !== "admin" && role !== "owner") return { ok: false };
-
-  const payload = parts.length === 4 ? `${issued}.${expires}.${role}` : `${issued}.${expires}`;
+  if (parts.length !== 3 || parts[0] !== "v2") return { ok: false };
+  const [, payload, sig] = parts;
   const expected = sign(payload, secret);
   const a = Buffer.from(sig), b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return { ok: false };
-  if (now > Number(expires)) return { ok: false, expired: true };
-  return { ok: true, role, issuedAt: Number(issued), expiresAt: Number(expires) };
+  let claims;
+  try { claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")); } catch { return { ok: false }; }
+  if (claims?.r !== "admin" && claims?.r !== "owner") return { ok: false };
+  if (!Number.isFinite(claims.i) || !Number.isFinite(claims.e)) return { ok: false };
+  if (now > claims.e) return { ok: false, expired: true };
+  return { ok: true, role: claims.r, userId: claims.u || null, accountId: claims.a || null,
+    email: claims.m || null, issuedAt: claims.i, expiresAt: claims.e };
 }
 
 export function cookieOptions({ production, ttlHours }) {

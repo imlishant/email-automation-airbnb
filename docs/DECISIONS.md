@@ -444,3 +444,35 @@ Volume is tiny — a few hundred KB per booking, deleted the day after checkout 
 so Turso's free storage covers it with room to spare, and it removes a whole
 account (R2) from the setup. The `s3` driver stays in the code as an option if
 volume ever grows. Files are AES-256-GCM encrypted before they reach Turso.
+
+## Multi-host accounts (2026-09-23)
+
+One deployment now serves many hosts. The shape:
+
+- **A user is an email address Google vouches for.** Sign-in is Google only
+  ("openid email profile", nothing else). The alternative — emailing sign-in
+  links — would mean a host's Gmail sending mail to strangers, which
+  `SECURITY.md` forbids: that mailbox exists to mail security desks.
+- **An account is one host's workspace**: their listings, societies, times and
+  sending Gmail. Every read and write is scoped to it in SQL, never filtered
+  afterwards, and another host's id reads as 404 rather than 403.
+- **Two roles.** `owner` is the host: the sending Gmail, a society's desk
+  address, who has access, deleting things. `admin` is a co-host: the daily
+  work. The role is read from the memberships table on each request (cached for
+  ten seconds, dropped whenever access changes), never taken from the cookie,
+  so removing a co-host takes effect immediately rather than when their cookie
+  expires.
+- **Co-hosts are invited by address and join on their first sign-in.** No
+  invitation email is sent, for the reason above.
+- **Who may start an account is a list the site owner keeps.** Signing in with
+  Google proves who someone is, not that they were invited to this deployment.
+  `PLATFORM_OWNER_EMAIL` is that person, and they also adopt the data from
+  before accounts existed, so an upgraded deployment keeps working.
+- **Each account's sending Gmail is a Gmail App Password**, encrypted with
+  `FILE_ENCRYPTION_KEY` exactly like an ID photo, and proven with a test email
+  to the host's own address before any guest's passport depends on it. Not
+  OAuth: Google's review of a send scope is weeks of process, and an app
+  password can only send.
+
+The passcode, the owner magic link and their tables are gone. `admin_auth` and
+`owner_links` remain in the schema, unused, until a later migration drops them.

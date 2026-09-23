@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 import { openDatabase, applyPragmas, run, query, newId, nowIso } from "./client.js";
 import { migrate, seedFirstRun } from "./migrate.js";
-import { initialisePasscode, policyFromEnv } from "../auth/admin.js";
+import { upsertUser, createAccount } from "../repo/accounts.js";
 
 const db = openDatabase();
 if (!db.isLocal) {
@@ -20,8 +20,16 @@ if (!db.isLocal) {
 await applyPragmas(db);
 await migrate(db);
 await seedFirstRun(db, { passcodeHash: "pending", checkInTime: "14:00", checkOutTime: "11:00" });
-await initialisePasscode(db.client, "0000", { policy: policyFromEnv() });
 const c = db.client;
+
+// A host to sign in as. Locally, the lock screen's "Sign in as" box takes this
+// address and needs no Google app (DEV_LOGIN).
+const DEMO_EMAIL = process.env.DEMO_EMAIL || process.env.PLATFORM_OWNER_EMAIL || "host@example.com";
+const demoUser = await upsertUser(c, { email: DEMO_EMAIL, name: "Demo Host" });
+const account = await createAccount(c, {
+  name: "Demo listings", ownerUserId: demoUser.id, checkInTime: "14:00", checkOutTime: "11:00",
+});
+const acc = account.id;
 
 const existing = await query(c, "SELECT COUNT(*) AS n FROM bookings");
 if (Number(existing[0].n) > 0) {
@@ -33,25 +41,25 @@ const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.
 const at = () => nowIso();
 
 const soc = newId("soc");
-await run(c, `INSERT INTO societies (id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
-  VALUES (?,?,?,?,?,?,?)`, [soc, "Greenwood Society, Candolim",
+await run(c, `INSERT INTO societies (id,account_id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
+  VALUES (?,?,?,?,?,?,?,?)`, [soc, acc, "Greenwood Society, Candolim",
   "security@greenwood.example", "clubhouse@greenwood.example",
   "Dear Security Team,\n\nPlease find attached the ID proofs for guests arriving at {{listing}}.\n\n" +
   "Booking reference: {{booking_id}}\nCheck-in: {{check_in}}\nCheck-out: {{check_out}}\nAdult guests: {{adult_count}}\n\n" +
   "Kindly allow entry as per society guidelines.\n\nRegards,\nArjun K. (Host)", at(), at()]);
 
 const soc2 = newId("soc");
-await run(c, `INSERT INTO societies (id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
-  VALUES (?,?,?,?,?,?,?)`, [soc2, "Hillcrest Residency, Coorg",
+await run(c, `INSERT INTO societies (id,account_id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
+  VALUES (?,?,?,?,?,?,?,?)`, [soc2, acc, "Hillcrest Residency, Coorg",
   "gate@hillcrest.example", "", "Hello Gate Desk,\n\nGuest ID documents for {{listing}} are attached.\n" +
   "Ref {{booking_id}}, {{adult_count}} adult(s), arriving {{check_in}}.\n\nThank you,\nArjun", at(), at()]);
 
 const lst = newId("lst"), lst2 = newId("lst");
-await run(c, `INSERT INTO listings (id,name,ical_url,society_id,last_synced_at,created_at,updated_at)
-  VALUES (?,?,?,?,?,?,?)`, [lst, "Sea Breeze 2BHK, Candolim",
+await run(c, `INSERT INTO listings (id,account_id,name,ical_url,society_id,last_synced_at,created_at,updated_at)
+  VALUES (?,?,?,?,?,?,?,?)`, [lst, acc, "Sea Breeze 2BHK, Candolim",
   "https://www.airbnb.co.in/calendar/ical/12345678.ics?s=demo", soc, at(), at(), at()]);
-await run(c, `INSERT INTO listings (id,name,ical_url,society_id,last_synced_at,created_at,updated_at)
-  VALUES (?,?,?,?,?,?,?)`, [lst2, "Hillview Studio, Coorg",
+await run(c, `INSERT INTO listings (id,account_id,name,ical_url,society_id,last_synced_at,created_at,updated_at)
+  VALUES (?,?,?,?,?,?,?,?)`, [lst2, acc, "Hillview Studio, Coorg",
   "https://www.airbnb.co.in/calendar/ical/87654321.ics?s=demo", soc2, at(), at(), at()]);
 
 async function booking({ listing, code, ci, nights, children = 0, automation = "allids", people, phone = null, conflict = 0, reason = null, lead = null }) {
@@ -82,7 +90,7 @@ await booking({ listing: lst2, code: "HMMNOP3456", ci: 14, nights: 1, automation
 const n = await query(c, "SELECT COUNT(*) AS b FROM bookings");
 console.log(`
   demo data ready — ${n[0].b} bookings, 2 listings, 2 societies
-  passcode 0000
+  sign in as ${DEMO_EMAIL} (development sign-in, no Google app needed)
 
   Upload a photo to any guest to watch a booking become "Ready to send".
 `);

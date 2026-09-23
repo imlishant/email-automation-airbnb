@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { loadConfig } from "../src/http/config.js";
 import { buildServer } from "../src/http/server.js";
 import { COOKIE, issueSession, verifySession } from "../src/http/session.js";
+import { signIn } from "./fixtures/session.js";
 
 let dir, app;
 const POLICY = { AUTH_MAX_ATTEMPTS: "3", AUTH_LOCKOUT_SECONDS: "60", RATE_LIMIT_AUTH_PER_MINUTE: "50",
@@ -15,7 +16,8 @@ const POLICY = { AUTH_MAX_ATTEMPTS: "3", AUTH_LOCKOUT_SECONDS: "60", RATE_LIMIT_
 
 before(async () => {
   dir = await mkdtemp(join(tmpdir(), "gatepass-http-"));
-  app = await buildServer(loadConfig({ DATABASE_URL: `file:${join(dir, "t.db")}`, ...POLICY }), { logger: false });
+  app = await buildServer(loadConfig({ DATABASE_URL: `file:${join(dir, "t.db")}`,
+    PLATFORM_OWNER_EMAIL: "site@example.com", ...POLICY }), { logger: false });
 });
 after(async () => { await app?.close(); await rm(dir, { recursive: true, force: true }); });
 
@@ -72,116 +74,91 @@ test("every response carries the security headers", async () => {
 test("bodies are validated, and unknown fields are REJECTED not stripped", async () => {
   // Silently dropping a field the client believes it sent is a bug that hides
   // itself, so ajv runs with removeAdditional off.
-  const extra = await post("/api/auth/unlock", { passcode: "0000", admin: true });
+  const extra = await post("/api/auth/dev-login", { email: "a@b.example", admin: true });
   assert.equal(extra.statusCode, 400);
   assert.match(extra.json().message, /additional properties/i);
 
-  for (const bad of [{ passcode: "abc" }, { passcode: "12345" }, { passcode: "123" }, { passcode: 1234 }, {}]) {
-    const res = await post("/api/auth/unlock", bad);
+  for (const bad of [{ email: "" }, { email: 5 }, {}]) {
+    const res = await post("/api/auth/dev-login", bad);
     assert.equal(res.statusCode, 400, `should reject ${JSON.stringify(bad)}`);
   }
 });
 
-// --- unlock / session -----------------------------------------------------
-test("the wrong passcode is refused and counts down", async () => {
-  const res = await post("/api/auth/unlock", { passcode: "9999" });
-  assert.equal(res.statusCode, 401);
-  assert.equal(res.json().error, "unauthorised");
-  assert.equal(res.json().attemptsRemaining, 2);
-  assert.equal(cookieOf(res), undefined, "no cookie on failure");
-});
-
-test("the right passcode returns an HttpOnly, SameSite cookie", async () => {
-  const res = await post("/api/auth/unlock", { passcode: "0000" });
+// --- signing in -----------------------------------------------------------
+test("signing in returns an HttpOnly, SameSite cookie", async () => {
+  const { cookie } = await signIn(app, { email: "cookie@example.com" });
+  const res = await post("/api/auth/dev-login", { email: "cookie@example.com" });
   assert.equal(res.statusCode, 200);
   const c = cookieOf(res);
   assert.ok(c, "a session cookie was set");
   assert.equal(c.httpOnly, true, "unreadable by script");
   assert.equal(c.sameSite, "Lax");
   assert.equal(c.path, "/");
-  // A successful unlock also clears the earlier failed attempts.
-  assert.equal((await post("/api/auth/unlock", { passcode: "9999" })).json().attemptsRemaining, 2);
+  assert.ok(cookie.startsWith(`${COOKIE}=`));
+});
+
+test("an address nobody approved cannot start an account", async () => {
+  const res = await post("/api/auth/dev-login", { email: "stranger@example.com" });
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.json().error, "not_approved");
+  assert.equal(cookieOf(res), undefined, "no cookie for someone turned away");
+});
+
+test("development sign-in cannot exist in production", () => {
+  const cfg = loadConfig({ NODE_ENV: "production", DEV_LOGIN: "true" });
+  assert.ok(cfg.fatal.some((f) => /DEV_LOGIN/.test(f)), cfg.fatal.join("; "));
 });
 
 test("protected routes need a valid session", async () => {
-  assert.equal((await get("/api/auth/status")).statusCode, 401);
-  assert.equal((await get("/api/auth/status", { cookie: `${COOKIE}=forged` })).statusCode, 401);
+  assert.equal((await get("/api/members")).statusCode, 401);
+  assert.equal((await get("/api/members", { cookie: `${COOKIE}=forged` })).statusCode, 401);
   // A well-formed token signed with the wrong key is still refused.
-  const foreign = issueSession("a-different-secret-entirely", { ttlHours: 1 });
-  assert.equal((await get("/api/auth/status", { cookie: `${COOKIE}=${foreign}` })).statusCode, 401);
+  const foreign = issueSession("a-different-secret-entirely", { ttlHours: 1, userId: "usr_x", accountId: "acc_x" });
+  assert.equal((await get("/api/members", { cookie: `${COOKIE}=${foreign}` })).statusCode, 401);
 
-  const unlocked = await post("/api/auth/unlock", { passcode: "0000" });
-  const ok = await get("/api/auth/status", asAdmin(unlocked));
-  assert.equal(ok.statusCode, 200);
-  assert.equal(ok.json().configured, true);
+  const { cookie } = await signIn(app, { email: "member@example.com" });
+  assert.equal((await get("/api/members", { cookie })).statusCode, 200);
+});
+
+test("a session for an account you are no longer a member of is refused", async () => {
+  // The role is read from the memberships table, not the cookie, so losing
+  // access takes effect on the next request rather than when the cookie
+  // expires. (The lookup is cached for a few seconds and the cache is dropped
+  // whenever access changes, so removal through the API is immediate.)
+  const owner = await signIn(app, { email: "owner2@example.com", accountName: "Owned" });
+  const helper = await signIn(app, { email: "helper2@example.com", accountId: owner.accountId, role: "admin" });
+  assert.equal((await get("/api/members", { cookie: helper.cookie })).statusCode, 200);
+
+  const removed = await app.inject({ method: "DELETE", url: `/api/members/${helper.userId}`,
+    headers: { cookie: owner.cookie } });
+  assert.equal(removed.statusCode, 200);
+  assert.equal((await get("/api/members", { cookie: helper.cookie })).statusCode, 401);
 });
 
 test("an expired session is refused", async () => {
-  const stale = issueSession(app.sessionSecret, { ttlHours: -1 });
+  const stale = issueSession(app.sessionSecret, { ttlHours: -1, userId: "usr_x", accountId: "acc_x" });
   assert.equal(verifySession(stale, app.sessionSecret).ok, false);
-  assert.equal((await get("/api/auth/status", { cookie: `${COOKIE}=${stale}` })).statusCode, 401);
+  assert.equal((await get("/api/members", { cookie: `${COOKIE}=${stale}` })).statusCode, 401);
 });
 
 test("/auth/session answers without needing a session", async () => {
-  assert.equal((await get("/api/auth/session")).json().admin, false);
-  const unlocked = await post("/api/auth/unlock", { passcode: "0000" });
-  assert.equal((await get("/api/auth/session", asAdmin(unlocked))).json().admin, true);
+  const anon = await get("/api/auth/session");
+  assert.equal(anon.statusCode, 200);
+  assert.equal(anon.json().signedIn, false);
+
+  const { cookie } = await signIn(app, { email: "who@example.com", accountName: "Their listings" });
+  const mine = (await get("/api/auth/session", { cookie })).json();
+  assert.equal(mine.signedIn, true);
+  assert.equal(mine.email, "who@example.com");
+  assert.equal(mine.role, "owner");
+  assert.equal(mine.account.name, "Their listings");
 });
 
-test("locking clears the cookie", async () => {
-  const unlocked = await post("/api/auth/unlock", { passcode: "0000" });
-  const locked = await post("/api/auth/lock", {}, asAdmin(unlocked));
-  assert.equal(locked.statusCode, 200);
-  assert.equal(cookieOf(locked).value, "", "the cookie is emptied");
-});
-
-// --- lockout over HTTP ----------------------------------------------------
-test("the account lockout is enforced at the HTTP layer too, with Retry-After", async () => {
-  // A fresh server, so this test's failures do not disturb the others.
-  const d = await mkdtemp(join(tmpdir(), "gatepass-lock-"));
-  const a = await buildServer(loadConfig({ DATABASE_URL: `file:${join(d, "t.db")}`, ...POLICY }), { logger: false });
-  try {
-    const bad = () => a.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "9999" } });
-    assert.equal((await bad()).json().attemptsRemaining, 2);
-    assert.equal((await bad()).json().attemptsRemaining, 1);
-    const third = await bad();
-    assert.equal(third.json().error, "locked");
-    assert.equal(third.headers["retry-after"], "60");
-
-    // The correct passcode is refused while locked — the point of a lockout.
-    const correct = await a.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "0000" } });
-    assert.equal(correct.statusCode, 401);
-    assert.equal(correct.json().error, "locked");
-    assert.equal(correct.cookies.find((c) => c.name === COOKIE), undefined);
-  } finally {
-    await a.close();
-    await rm(d, { recursive: true, force: true });
-  }
-});
-
-// --- changing the passcode ------------------------------------------------
-test("changing the passcode needs a session, validates, and retires the session", async () => {
-  const d = await mkdtemp(join(tmpdir(), "gatepass-pass-"));
-  const a = await buildServer(loadConfig({ DATABASE_URL: `file:${join(d, "t.db")}`, ...POLICY }), { logger: false });
-  try {
-    const inj = (url, payload, headers) => a.inject({ method: "POST", url, payload, headers });
-    assert.equal((await inj("/api/auth/passcode", { next: "2468" })).statusCode, 401, "no session");
-
-    const un = await inj("/api/auth/unlock", { passcode: "0000" });
-    const hdr = { cookie: `${COOKIE}=${un.cookies.find((c) => c.name === COOKIE).value}` };
-    assert.equal((await inj("/api/auth/passcode", { next: "24" }, hdr)).statusCode, 400);
-    assert.equal((await inj("/api/auth/passcode", { next: "abcd" }, hdr)).statusCode, 400);
-
-    const changed = await inj("/api/auth/passcode", { next: "2468" }, hdr);
-    assert.equal(changed.statusCode, 200);
-    assert.equal(changed.cookies.find((c) => c.name === COOKIE).value, "", "the session is retired");
-
-    assert.equal((await inj("/api/auth/unlock", { passcode: "0000" })).statusCode, 401, "old code is dead");
-    assert.equal((await inj("/api/auth/unlock", { passcode: "2468" })).statusCode, 200);
-  } finally {
-    await a.close();
-    await rm(d, { recursive: true, force: true });
-  }
+test("signing out clears the cookie", async () => {
+  const { cookie } = await signIn(app, { email: "bye@example.com" });
+  const out = await post("/api/auth/lock", {}, { cookie });
+  assert.equal(out.statusCode, 200);
+  assert.equal(cookieOf(out).value, "", "the cookie is emptied");
 });
 
 // --- errors ---------------------------------------------------------------

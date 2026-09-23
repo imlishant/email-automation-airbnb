@@ -70,9 +70,10 @@ export async function registerBookings(app) {
       },
     },
   }, async (req, reply) => {
-    const settings = await appSettings(client);
+    const settings = await appSettings(client, req.accountId);
     const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 100);
     const page = await listBookings(client, {
+      accountId: req.accountId,
       listingId: req.query.listingId || null,
       cursor: req.query.cursor || null,
       limit, settings,
@@ -124,13 +125,13 @@ export async function registerBookings(app) {
       },
     },
   }, async (req, reply) => {
-    const booking = await getBooking(client, req.params.id);
+    const booking = await getBooking(client, req.params.id, { accountId: req.accountId });
     if (!booking) return reply.code(404).send({ error: "not_found" });
     // Minted on first view rather than at sync time: a booking nobody opens
     // never needs a link, and a link that exists is one more thing to leak.
     const { _liveLink, ...rest } = booking;
     const guestLink = await ensureGuestLink(client, booking.id, app.guestSecret,
-      { existing: _liveLink, checkOut: booking.checkOut, settings: booking.times });
+      { existing: _liveLink, checkOut: booking.checkOut, settings: booking.times, accountId: booking.accountId });
     return { ...rest, guestLink };
   });
 
@@ -145,6 +146,10 @@ export async function registerBookings(app) {
       },
     },
   }, async (req, reply) => {
+    // Scoped first: a booking id from another account must read as missing.
+    if (!await getBooking(client, req.params.id, { accountId: req.accountId })) {
+      return reply.code(404).send({ error: "not_found" });
+    }
     const link = await regenerateGuestLink(client, req.params.id, app.guestSecret);
     if (!link) return reply.code(404).send({ error: "not_found" });
     req.log.info({ booking: req.params.id }, "guest link regenerated");

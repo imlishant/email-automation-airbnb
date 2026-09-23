@@ -11,6 +11,8 @@ import { migrate, seedFirstRun } from "../src/db/migrate.js";
 import { localStore } from "../src/files/store.js";
 import { findExpired, purgeExpired } from "../src/jobs/purge.js";
 import { addDays, toDay } from "../../shared/rules.js";
+import { seedAccount } from "./fixtures/session.js";
+let acc;   // every society and listing below belongs to this account
 
 let dir, db, client, store, lst;
 const today = () => toDay(new Date());
@@ -21,6 +23,7 @@ before(async () => {
   client = db.client;
   await applyPragmas(db); await migrate(db);
   await seedFirstRun(db, { passcodeHash: "x", checkInTime: "14:00", checkOutTime: "11:00" });
+  acc = await seedAccount(client);
   store = localStore({ dir: join(dir, "uploads") });
 });
 after(async () => { await rm(dir, { recursive: true, force: true }); });
@@ -29,10 +32,10 @@ beforeEach(async () => {
   await rm(join(dir, "uploads"), { recursive: true, force: true });
   for (const t of ["jobs", "guest_links", "documents", "people", "activity", "bookings", "listings", "societies"]) await run(client, `DELETE FROM ${t}`);
   const soc = newId("soc"); lst = newId("lst");
-  await run(client, `INSERT INTO societies (id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?)`,
-    [soc, "S", "d@x.example", "t", nowIso(), nowIso()]);
-  await run(client, `INSERT INTO listings (id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?)`,
-    [lst, "L", "https://a.example/c.ics", soc, nowIso(), nowIso()]);
+  await run(client, `INSERT INTO societies (id,account_id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
+    [soc, acc, "S", "d@x.example", "t", nowIso(), nowIso()]);
+  await run(client, `INSERT INTO listings (id,account_id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
+    [lst, acc, "L", "https://a.example/c.ics", soc, nowIso(), nowIso()]);
 });
 
 async function booking(checkOut, { files = 1 } = {}) {

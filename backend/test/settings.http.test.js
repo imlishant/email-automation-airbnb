@@ -8,6 +8,8 @@ import { loadConfig } from "../src/http/config.js";
 import { buildServer } from "../src/http/server.js";
 import { COOKIE } from "../src/http/session.js";
 import { newId, nowIso, run } from "../src/db/client.js";
+import { signIn } from "./fixtures/session.js";
+let acc;   // the signed-in account every row below belongs to
 
 let dir, app, auth;
 
@@ -17,8 +19,9 @@ before(async () => {
     DATABASE_URL: `file:${join(dir, "t.db")}`,
     RATE_LIMIT_GLOBAL_PER_MINUTE: "5000", RATE_LIMIT_AUTH_PER_MINUTE: "500",
   }), { logger: false });
-  const un = await app.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "0000" } });
-  auth = { cookie: `${COOKIE}=${un.cookies.find((c) => c.name === COOKIE).value}` };
+  const session = await signIn(app);
+  acc = session.accountId;
+  auth = { cookie: session.cookie };
 });
 after(async () => { await app?.close(); await rm(dir, { recursive: true, force: true }); });
 

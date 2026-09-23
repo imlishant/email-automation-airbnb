@@ -64,20 +64,32 @@ try {
 
   // --- session ----------------------------------------------------------
   await Data.lock();
-  ok("a fresh browser has no admin session", (await Data.session()).admin === false);
-  ok("a wrong passcode is refused", (await Data.unlock("9999")).ok === false);
-  const unlocked = await Data.unlock("0000");
-  ok("the right passcode unlocks", unlocked.ok === true, JSON.stringify(unlocked));
-  ok("and the session is now real", (await Data.session()).admin === true);
-  ok("the passcode is never readable from the client",
-     (await Data.passcode()).value === null, "the server only stores a hash");
+  const anon = await Data.session();
+  ok("a fresh browser has no session", anon.signedIn === false);
+  ok("the sign-in page knows what this server offers",
+     anon.google === true || anon.devLogin === true, "neither Google nor development sign-in is available");
+
+  // Sign-in proper is Google's; locally the development route stands in for it.
+  const who = anon.devLogin ? await Data.devLogin("host@example.com") : { ok: false };
+  ok("signing in works", who.ok === true, JSON.stringify(who));
+  const me = await Data.session();
+  ok("and the session says who and where", me.signedIn === true && Boolean(me.account),
+     JSON.stringify(me));
+  ok("a stranger cannot start an account here",
+     anon.devLogin ? (await Data.devLogin("stranger@example.com")).ok === false : true);
   __setUnlocked(true);
 
   // --- fixtures via the real API ----------------------------------------
   for (const l of await Data.listings()) await Data.deleteListing(l.id);
   let societies = await Data.societies();
   if (!societies.length) {
-    ok("a society could not be created", false, "no society and none seeded");
+    // A brand-new account has none, so make one the way the Settings page does.
+    const made = await Data.addSociety({
+      name: "Check Society", to: "desk@check.example", cc: "",
+      template: "IDs for {{listing}}, booking {{booking_id}}, {{adult_count}} adult(s).",
+    });
+    ok("a society can be created through the API", made.ok, JSON.stringify(made));
+    societies = await Data.societies();
   }
   const socId = societies[0]?.id;
   const added = socId ? await Data.addListing({

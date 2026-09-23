@@ -17,13 +17,12 @@ const fields = (body) => Object.keys(body || {}).join(", ");
 
 // key: "METHOD route-pattern"
 const AUDITED = {
-  "POST /api/auth/passcode": { kind: "passcode", text: () => "Admin passcode changed" },
-  "POST /api/auth/unlock": {
-    kind: "lockout",
-    // Only a lockout is worth a row; ordinary wrong guesses are counted, not logged.
-    when: (status, payload) => status === 401 && /"error":"locked"/.test(payload),
-    text: () => "Admin side locked after repeated wrong passcodes",
-  },
+  "POST /api/members": { kind: "access", text: (req) => `${req.body.email} invited as a co-host` },
+  "DELETE /api/members/:id": { kind: "access", text: (req) => "A co-host's access was removed" },
+  "DELETE /api/invites/:id": { kind: "access", text: () => "An invitation was withdrawn" },
+  "PATCH /api/account": { kind: "account", text: (req) => `Account renamed to "${req.body.name}"` },
+  "PUT /api/mail": { kind: "mail", text: (req) => `Sending Gmail set to ${req.body.fromEmail}` },
+  "DELETE /api/mail": { kind: "mail", text: () => "Sending Gmail disconnected" },
   "POST /api/societies": { kind: "society", text: (req) => `Society "${req.body.name}" added` },
   "PATCH /api/societies/:id": {
     kind: "society", lookup: nameOf("societies"),
@@ -68,7 +67,11 @@ export function registerAudit(app) {
     const recordIt = rule.when ? rule.when(status, String(payload || "")) : status >= 200 && status < 300;
     if (recordIt) {
       try {
-        await recordAudit(client, { kind: rule.kind, text: rule.text(req, req.auditName), ip: req.ip });
+        // Who, as well as what: logins are people now, not a shared passcode.
+        await recordAudit(client, {
+          accountId: req.accountId || null, actorEmail: req.actorEmail || null,
+          kind: rule.kind, text: rule.text(req, req.auditName), ip: req.ip,
+        });
       } catch (e) {
         // An audit failure must not fail the action — but it must be visible.
         req.log.error({ err: e.message }, "audit write failed");

@@ -3,6 +3,7 @@
 // own token-scoped versions of the people and document endpoints.
 // ---------------------------------------------------------------------------
 import { requireAdmin } from "./auth.js";
+import { bookingInAccount } from "../../repo/bookings.js";
 import { AUTOMATION } from "../../../../shared/rules.js";
 import {
   setAdultCount, renamePerson, putDocument, removeDocument, setAutomation, sendBooking,
@@ -46,10 +47,18 @@ function refuse(reply, res) {
 
 export async function registerBookingActions(app) {
   const admin = requireAdmin(app);
+  // Every route here acts on one booking id, so the scope check is a hook
+  // rather than a line repeated in each handler.
+  const scoped = [admin, async (req, reply) => {
+    if (!await bookingInAccount(client, req.accountId, req.params.id)) {
+      reply.code(404).send({ error: "not_found" });
+      return reply;
+    }
+  }];
   const client = app.db.client;
 
   app.post("/bookings/:id/people", {
-    onRequest: admin,
+    onRequest: scoped,
     schema: {
       params: params("id"),
       body: { type: "object", required: ["adults"], additionalProperties: false,
@@ -64,7 +73,7 @@ export async function registerBookingActions(app) {
   });
 
   app.patch("/bookings/:id/people/:personId", {
-    onRequest: admin,
+    onRequest: scoped,
     schema: {
       params: params("id", "personId"),
       body: { type: "object", required: ["name"], additionalProperties: false,
@@ -78,7 +87,7 @@ export async function registerBookingActions(app) {
   });
 
   app.put("/bookings/:id/people/:personId/document", {
-    onRequest: admin,
+    onRequest: scoped,
     schema: {
       params: params("id", "personId"),
       body: { type: "object", required: ["docType"], additionalProperties: false,
@@ -94,7 +103,7 @@ export async function registerBookingActions(app) {
   });
 
   app.delete("/bookings/:id/people/:personId/document", {
-    onRequest: admin,
+    onRequest: scoped,
     schema: { params: params("id", "personId"), response: { 200: okOut, 404: errOut, 409: errOut } },
   }, async (req, reply) => {
     const res = await removeDocument(client, req.params.id, req.params.personId, { actor: "admin" });
@@ -103,7 +112,7 @@ export async function registerBookingActions(app) {
   });
 
   app.patch("/bookings/:id/automation", {
-    onRequest: admin,
+    onRequest: scoped,
     schema: {
       params: params("id"),
       body: { type: "object", required: ["automation"], additionalProperties: false,
@@ -124,12 +133,13 @@ export async function registerBookingActions(app) {
    * would stop chasing, and the guest would be held at the gate.
    */
   app.post("/bookings/:id/send", {
-    onRequest: admin,
+    onRequest: scoped,
     config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
     schema: { params: params("id"), response: { 200: okOut, 400: errOut, 404: errOut, 409: errOut, 503: errOut } },
   }, async (req, reply) => {
-    const res = await sendBooking(client, req.params.id, app.mail, {
-      actor: "admin", mailFrom: app.config.mail.from,
+    const mail = await app.mailFor(req.accountId);
+    const res = await sendBooking(client, req.params.id, mail.transport, {
+      actor: "admin", mailFrom: mail.from,
       files: app.files, fileKey: app.fileKey,
       maxAttachmentBytes: app.config.mail.maxAttachmentBytes,
     });

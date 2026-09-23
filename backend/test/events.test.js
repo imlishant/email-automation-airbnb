@@ -12,6 +12,8 @@ import { COOKIE } from "../src/http/session.js";
 import { newId, nowIso, run } from "../src/db/client.js";
 import { bus } from "../src/events.js";
 import { addDays, toDay } from "../../shared/rules.js";
+import { signIn } from "./fixtures/session.js";
+let acc;   // the signed-in account every row below belongs to
 
 let dir, app, port, cookie, bkgA, bkgB, personA, tokenA;
 const today = () => toDay(new Date());
@@ -20,15 +22,16 @@ before(async () => {
   dir = await mkdtemp(join(tmpdir(), "gatepass-sse-"));
   app = await buildServer(loadConfig({ DATABASE_URL: `file:${join(dir, "t.db")}`,
     RATE_LIMIT_GLOBAL_PER_MINUTE: "5000", RATE_LIMIT_AUTH_PER_MINUTE: "500" }), { logger: false });
+  const session = await signIn(app);
+  acc = session.accountId;
+  cookie = session.cookie;
   await app.listen({ port: 0, host: "127.0.0.1" });
   port = app.server.address().port;
   const c = app.db.client;
-  const un = await app.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "0000" } });
-  cookie = `${COOKIE}=${un.cookies.find((k) => k.name === COOKIE).value}`;
 
   const soc = newId("soc"), lst = newId("lst");
-  await run(c, `INSERT INTO societies (id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?)`, [soc, "S", "d@x.example", "t", nowIso(), nowIso()]);
-  await run(c, `INSERT INTO listings (id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?)`, [lst, "L", "https://a.example/c.ics", soc, nowIso(), nowIso()]);
+  await run(c, `INSERT INTO societies (id,account_id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`, [soc, acc, "S", "d@x.example", "t", nowIso(), nowIso()]);
+  await run(c, `INSERT INTO listings (id,account_id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`, [lst, acc, "L", "https://a.example/c.ics", soc, nowIso(), nowIso()]);
   for (const [id, per] of [[bkgA = newId("bkg"), personA = newId("per")], [bkgB = newId("bkg"), newId("per")]]) {
     await run(c, `INSERT INTO bookings (id,airbnb_code,listing_id,check_in,check_out,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
       [id, newId("HM"), lst, addDays(today(), 2), addDays(today(), 5), nowIso(), nowIso()]);

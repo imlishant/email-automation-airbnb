@@ -15,7 +15,7 @@ import { gzipSync } from "node:zlib";
 import { randomBytes } from "node:crypto";
 import { loadConfig } from "../src/http/config.js";
 import { buildServer } from "../src/http/server.js";
-import { COOKIE } from "../src/http/session.js";
+import { signIn, seedAccount } from "../test/fixtures/session.js";
 import { newId, nowIso, openDatabase, applyPragmas } from "../src/db/client.js";
 import { migrate, seedFirstRun } from "../src/db/migrate.js";
 import { spawn, execSync } from "node:child_process";
@@ -35,16 +35,16 @@ const BUDGET = {
 const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const p = (xs, q) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; };
 
-async function seed(client, { listings, bookings }) {
+async function seed(client, { listings, bookings }, accountId) {
   const soc = newId("soc");
   const at = nowIso();
-  const stmts = [{ sql: `INSERT INTO societies (id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?)`,
-                   args: [soc, "Load Society", "desk@load.example", "Dear {{listing}}", at, at] }];
+  const stmts = [{ sql: `INSERT INTO societies (id,account_id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
+                   args: [soc, accountId, "Load Society", "desk@load.example", "Dear {{listing}}", at, at] }];
   const lst = [];
   for (let i = 0; i < listings; i++) {
     const id = newId("lst"); lst.push(id);
-    stmts.push({ sql: `INSERT INTO listings (id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?)`,
-                 args: [id, `Listing ${i}`, "https://airbnb.example/c.ics", soc, at, at] });
+    stmts.push({ sql: `INSERT INTO listings (id,account_id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
+                 args: [id, accountId, `Listing ${i}`, "https://airbnb.example/c.ics", soc, at, at] });
   }
   for (let i = 0; i < bookings; i++) {
     const id = newId("bkg");
@@ -77,9 +77,9 @@ async function measure(multiplier) {
     RATE_LIMIT_GLOBAL_PER_MINUTE: "1000000", RATE_LIMIT_AUTH_PER_MINUTE: "1000" }), { logger: false });
   try {
     const client = app.db.client;
-    const listings = await seed(client, size);
-    const un = await app.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "0000" } });
-    const headers = { cookie: `${COOKIE}=${un.cookies.find((c) => c.name === COOKIE).value}` };
+    const session = await signIn(app);
+    const listings = await seed(client, size, session.accountId);
+    const headers = { cookie: session.cookie };
 
     // Count database round trips per request: the cost that matters once the
     // database is a network hop away.
@@ -127,7 +127,8 @@ async function serverMemory(multiplier) {
   const db = openDatabase({ url });
   await applyPragmas(db); await migrate(db);
   await seedFirstRun(db, { passcodeHash: "x", checkInTime: "14:00", checkOutTime: "11:00" });
-  await seed(db.client, { listings: BASE.listings * multiplier, bookings: BASE.bookings * multiplier });
+  const accountId = await seedAccount(db.client);
+  await seed(db.client, { listings: BASE.listings * multiplier, bookings: BASE.bookings * multiplier }, accountId);
   db.client.close();
   const port = 18000 + (process.pid % 1000);
   const child = spawn(process.execPath, ["src/index.js"], {
@@ -137,7 +138,9 @@ async function serverMemory(multiplier) {
   });
   try {
     for (let i = 0; i < 50; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/healthz`)).ok) break; } catch {} await new Promise((r) => setTimeout(r, 100)); }
-    const un = await fetch(`http://127.0.0.1:${port}/api/auth/unlock`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passcode: "0000" }) });
+    // The child process signs itself in the way a browser would locally.
+    const un = await fetch(`http://127.0.0.1:${port}/api/auth/dev-login`, { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "host@example.com" }) });
     const cookie = un.headers.get("set-cookie").split(";")[0];
     for (let i = 0; i < 100; i++) await (await fetch(`http://127.0.0.1:${port}/api/bookings`, { headers: { cookie } })).arrayBuffer();
     return Number(execSync(`ps -o rss= -p ${child.pid}`).toString().trim()) / 1024;

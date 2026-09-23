@@ -12,6 +12,8 @@ import { newId, nowIso, run, one } from "../src/db/client.js";
 import { recordingTransport } from "../src/mail/transport.js";
 import { purgeExpired } from "../src/jobs/purge.js";
 import { addDays, toDay } from "../../shared/rules.js";
+import { signIn } from "./fixtures/session.js";
+let acc;   // the signed-in account every row below belongs to
 
 let dir, app, cookie, bkg, per;
 const today = () => toDay(new Date());
@@ -21,15 +23,16 @@ before(async () => {
   app = await buildServer(loadConfig({ DATABASE_URL: `file:${join(dir, "t.db")}`, STORAGE_DRIVER: "db",
     FILE_ENCRYPTION_KEY: randomBytes(32).toString("base64"), MAIL_FROM: "h@example.com",
     RATE_LIMIT_GLOBAL_PER_MINUTE: "5000", RATE_LIMIT_AUTH_PER_MINUTE: "500" }), { logger: false });
+  const session = await signIn(app);
+  acc = session.accountId;
+  cookie = session.cookie;
   app.mail = recordingTransport();
   const c = app.db.client, soc = newId("soc"), lst = newId("lst"); bkg = newId("bkg"); per = newId("per");
-  await run(c, `INSERT INTO societies (id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?)`, [soc, "S", "d@x.example", "t", nowIso(), nowIso()]);
-  await run(c, `INSERT INTO listings (id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?)`, [lst, "L", "https://a.example/c.ics", soc, nowIso(), nowIso()]);
+  await run(c, `INSERT INTO societies (id,account_id,name,desk_email_to,template,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`, [soc, acc, "S", "d@x.example", "t", nowIso(), nowIso()]);
+  await run(c, `INSERT INTO listings (id,account_id,name,ical_url,society_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`, [lst, acc, "L", "https://a.example/c.ics", soc, nowIso(), nowIso()]);
   await run(c, `INSERT INTO bookings (id,airbnb_code,listing_id,check_in,check_out,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
     [bkg, "HMDBSTORE1", lst, addDays(today(), 2), addDays(today(), 5), nowIso(), nowIso()]);
   await run(c, `INSERT INTO people (id,booking_id,name,is_lead,created_at) VALUES (?,?,?,1,?)`, [per, bkg, "Priya Menon", nowIso()]);
-  const un = await app.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "0000" } });
-  cookie = `${COOKIE}=${un.cookies.find((k) => k.name === COOKIE).value}`;
 });
 after(async () => { await app?.close(); await rm(dir, { recursive: true, force: true }); });
 

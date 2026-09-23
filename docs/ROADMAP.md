@@ -276,7 +276,7 @@ Found by using the prototype rather than by planning.
 
 Not scheduled. Each is its own phase, agreed before building.
 
-1. **Multi-host accounts.** Today one deployment = one host: one shared
+1. **(Done 2026-09-23)** **Multi-host accounts.** Today one deployment = one host: one shared
    passcode, one `OWNER_EMAIL`, one Gmail sender. To let other hosts use the
    same site, each would sign in with their own email and see only their own
    listings; set up their own sending Gmail from the website (not Render env

@@ -12,6 +12,8 @@ import { newId, nowIso, run, one, query } from "../src/db/client.js";
 import { recordingTransport } from "../src/mail/transport.js";
 import { randomBytes } from "node:crypto";
 import { Derive, addDays, toDay } from "../../shared/rules.js";
+import { signIn } from "./fixtures/session.js";
+let acc;   // the signed-in account every row below belongs to
 
 let dir, app, auth, client;
 const today = () => toDay(new Date());
@@ -25,9 +27,10 @@ before(async () => {
     FILE_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
     UPLOAD_DIR: join(dir, "uploads"),
   }), { logger: false });
+  const session = await signIn(app);
+  acc = session.accountId;
+  auth = { cookie: session.cookie };
   client = app.db.client;
-  const un = await app.inject({ method: "POST", url: "/api/auth/unlock", payload: { passcode: "0000" } });
-  auth = { cookie: `${COOKIE}=${un.cookies.find((c) => c.name === COOKIE).value}` };
 });
 after(async () => { await app?.close(); await rm(dir, { recursive: true, force: true }); });
 
@@ -51,11 +54,11 @@ let soc, lst, bkg, lead;
 beforeEach(async () => {
   for (const t of ["documents", "people", "activity", "bookings", "listings", "societies"]) await run(client, `DELETE FROM ${t}`);
   soc = newId("soc"); lst = newId("lst"); bkg = newId("bkg"); lead = newId("per");
-  await run(client, `INSERT INTO societies (id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?)`, [soc, "Greenwood Society", "desk@greenwood.example", "cc@greenwood.example",
+  await run(client, `INSERT INTO societies (id,account_id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?)`, [soc, acc, "Greenwood Society", "desk@greenwood.example", "cc@greenwood.example",
     "Dear team, {{listing}} {{booking_id}} {{adult_count}} adults", nowIso(), nowIso()]);
-  await run(client, `INSERT INTO listings (id,name,ical_url,society_id,created_at,updated_at)
-    VALUES (?,?,?,?,?,?)`, [lst, "Sea Breeze 2BHK", "https://airbnb.com/c.ics", soc, nowIso(), nowIso()]);
+  await run(client, `INSERT INTO listings (id,account_id,name,ical_url,society_id,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)`, [lst, acc, "Sea Breeze 2BHK", "https://airbnb.com/c.ics", soc, nowIso(), nowIso()]);
   await run(client, `INSERT INTO bookings (id,airbnb_code,listing_id,check_in,check_out,children,automation,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?)`, [bkg, "HMABCD1234", lst, addDays(today(), 2), addDays(today(), 5), 1, "allids", nowIso(), nowIso()]);
   await run(client, `INSERT INTO people (id,booking_id,name,is_lead,created_at) VALUES (?,?,?,1,?)`,
@@ -240,8 +243,8 @@ test("a resend goes to the same address even after the listing moves society", a
 
   // The admin moves the listing to a different society.
   const other = newId("soc");
-  await run(client, `INSERT INTO societies (id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?)`, [other, "Hillcrest", "gate@hillcrest.example", "", "Hello", nowIso(), nowIso()]);
+  await run(client, `INSERT INTO societies (id,account_id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?)`, [other, acc, "Hillcrest", "gate@hillcrest.example", "", "Hello", nowIso(), nowIso()]);
   await run(client, "UPDATE listings SET society_id = ? WHERE id = ?", [other, lst]);
 
   const res = await req("POST", `/api/bookings/${bkg}/send`);

@@ -176,8 +176,10 @@ function viewToRoute() {
   if (view.screen === "detail") return `#bookings/${encodeURIComponent(view.bookingId)}`;
   return "#bookings";
 }
+let lastAdminRoute = "#bookings";   // where "Back to admin" returns from a guest preview
 function syncAddress() {
   const want = viewToRoute(), have = location.hash || "";
+  lastAdminRoute = want;
   if (have === want) return;
   // A real screen change adds a history entry (so Back works); arriving with
   // no route, or from the sign-in link, just names the page.
@@ -510,7 +512,8 @@ const LISTING_ERRORS = {
 const TABS = [
   { key: "listings", label: "Listings" },
   { key: "societies", label: "Societies & templates" },
-  { key: "access", label: "Admin access" },
+  { key: "email", label: "Sending email" },
+  { key: "access", label: "Access & activity" },
 ];
 async function renderSettings(seq) {
   if (!fresh(seq)) return;
@@ -522,6 +525,7 @@ async function renderSettings(seq) {
   const body = document.getElementById("sbody");
   if (view.tab === "listings") await renderSetListings(body, seq);
   else if (view.tab === "societies") await renderSetSocieties(body, seq);
+  else if (view.tab === "email") await renderSetEmail(body, seq);
   else await renderSetAccess(body, seq);
 }
 
@@ -765,45 +769,164 @@ function socCard(s, listingCount) {
     </div></div>`;
 }
 
-async function renderSetAccess(body, seq) {
+/**
+ * The Gmail this account's security emails are sent from. The host's own
+ * mailbox, connected with a Gmail App Password — the tool can only send, never
+ * read (docs/SECURITY.md).
+ */
+async function renderSetEmail(body, seq) {
+  const mail = await Data.mailSettings().catch(() => null);
   if (!fresh(seq)) return;
-  const len = CONFIG.auth.passcodeLength;
-  const canSetPin = sessionInfo.role === "owner" || !sessionInfo.ownerTier;
+  const isOwner = sessionInfo.role === "owner";
   body.innerHTML = `
-    <p class="setnote">One ${len}-digit passcode unlocks the admin side for everyone on your team. It starts at ${esc(CONFIG.auth.firstRunPasscode)}, so you're never locked out.
-      ${canSetPin ? "" : "Only the owner can change it, so the people it is shared with cannot lock each other out."}</p>
-    <p class="setnote">The passcode itself is never shown. The server stores only a
-      hash and cannot read it back, so if it is forgotten, the owner sets a new one here.</p>
-    ${canSetPin ? `<div class="field"><label for="newpin">Change passcode</label>
-      <div class="desc">Enter a new ${len}-digit code. It takes effect right away, and everyone signs in again with it.</div>
-      <input class="input pinput" id="newpin" inputmode="numeric" maxlength="${len}" autocomplete="off" placeholder="${"•".repeat(len)}">
-    </div>
-    <button class="btn primary" id="savepin">Update passcode</button>`
-    : `<p class="setnote"><b>To change it:</b> press <b>Lock</b> (bottom left), then use “Owner? Email me a sign-in link” and open the link from the owner’s Gmail.</p>`}
+    <p class="setnote">Security desks receive the IDs from your own Gmail, so they see mail from the person they deal with. GatePass only sends; it never reads your mail.</p>
+    ${mail ? `<div class="listing-row" style="flex-direction:column;align-items:stretch;gap:6px">
+      <div class="nm">${esc(mail.fromEmail)}</div>
+      <div style="color:var(--muted);font-size:12.5px">
+        ${mail.verifiedAt ? `Test email sent ${esc(fmt.stamp(mail.verifiedAt))}.` : "Not tested yet."}
+        ${mail.lastError ? `<br><b>Last error:</b> ${esc(mail.lastError)}` : ""}</div>
+      ${isOwner ? `<div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn primary" id="mailTest">Send a test email</button>
+        <button class="btn" id="mailForget">Disconnect</button></div>` : ""}
+    </div>` : `<div class="listing-row"><div style="color:var(--muted);font-size:13px">No Gmail connected yet, so nothing can be sent.</div></div>`}
+    ${isOwner ? `<div class="listing-row" style="flex-direction:column;align-items:stretch;gap:10px;margin-top:14px">
+      <div class="nm">${mail ? "Change the Gmail" : "Connect your Gmail"}</div>
+      <div class="field"><label for="mailFrom">Gmail address</label><input class="input" id="mailFrom" type="email" placeholder="you@gmail.com"></div>
+      <div class="field"><label for="mailPass">App Password</label>
+        <div class="desc">Not your normal password. In your Google Account → Security, turn on 2-Step Verification, then create an App Password and paste the 16 characters here. It is encrypted before it is stored.</div>
+        <input class="input" id="mailPass" type="password" autocomplete="new-password" placeholder="xxxx xxxx xxxx xxxx"></div>
+      <button class="btn primary" id="mailSave" style="align-self:flex-start">Save and test</button>
+    </div>` : `<p class="setnote">Only the host who owns this account can change the sending address.</p>`}`;
+  if (!isOwner) return;
+
+  const test = async () => {
+    toast("Sending a test email\u2026");
+    const res = await Data.testMail();
+    toast(res.ok ? res.message : res.message || "That did not send");
+    render();
+  };
+  const t = document.getElementById("mailTest");
+  if (t) t.onclick = test;
+  const f = document.getElementById("mailForget");
+  if (f) f.onclick = async () => {
+    const res = await Data.disconnectMail();
+    toast(res.ok ? "Gmail disconnected \u2014 nothing can be sent until another is connected" : res.message);
+    render();
+  };
+  document.getElementById("mailSave").onclick = async () => {
+    const fromEmail = document.getElementById("mailFrom").value.trim();
+    const appPassword = document.getElementById("mailPass").value.trim();
+    if (!fromEmail || !appPassword) { toast("Enter the address and the App Password"); return; }
+    const res = await Data.connectMail({ fromEmail, appPassword });
+    if (!res.ok) { toast(res.message || "That was not saved"); return; }
+    // Saving proves nothing; sending does. So the test runs immediately.
+    await test();
+  };
+}
+
+/**
+ * Who can open this account, and what has been done in it. Co-hosts are
+ * invited by address and sign in with their own Google account, so every line
+ * in the log names a person.
+ */
+async function renderSetAccess(body, seq) {
+  const [access, approvals] = await Promise.all([
+    Data.members().catch(() => ({ members: [], invites: [] })),
+    sessionInfo.platformOwner ? Data.approvals().catch(() => []) : Promise.resolve(null),
+  ]);
+  if (!fresh(seq)) return;
+  const isOwner = sessionInfo.role === "owner";
+  body.innerHTML = `
+    <div class="field"><label for="accName">Account name</label>
+      <div class="desc">Yours alone. Only you and the people you invite can see this account's bookings.</div>
+      <input class="input" id="accName" ${isOwner ? "" : "disabled"}></div>
+    ${isOwner ? `<button class="btn" id="accSave">Rename</button>` : ""}
+
     <div class="section" style="margin-top:32px">
-      <div class="sechead"><h2>Admin activity</h2></div>
-      <p class="note">Changes to settings, passcode changes and lockouts. The passcode is shared, so
-        each entry shows the address it came from rather than a person.</p>
+      <div class="sechead"><h2>People with access</h2></div>
+      <p class="note">A co-host signs in with their own Google account and sees only this account. ${isOwner ? "You can remove them at any time." : "Only the host can add or remove people."}</p>
+      <ul class="log" id="memberList">
+        ${access.members.map((m) => `<li><span class="bud"></span><span class="t">${esc(m.role === "owner" ? "Host" : "Co-host")}</span>
+          <span>${esc(m.email)}${m.name ? ` \u00b7 ${esc(m.name)}` : ""}
+          ${isOwner && m.role !== "owner" ? `<button class="btn sm" data-rmuser="${esc(m.userId)}" style="margin-left:8px">Remove</button>` : ""}</span></li>`).join("")}
+        ${access.invites.map((i) => `<li><span class="bud"></span><span class="t">Invited</span>
+          <span>${esc(i.email)} \u2014 waiting for their first sign-in
+          ${isOwner ? `<button class="btn sm" data-rminv="${esc(i.id)}" style="margin-left:8px">Withdraw</button>` : ""}</span></li>`).join("")}
+      </ul>
+      ${isOwner ? `<div class="field" style="margin-top:10px"><label for="invEmail">Invite a co-host</label>
+        <div class="desc">Their Google address. Nothing is emailed \u2014 tell them to open this site and sign in with Google.</div>
+        <input class="input" id="invEmail" type="email" placeholder="cohost@gmail.com"></div>
+      <button class="btn primary" id="invGo">Invite</button>` : ""}
+    </div>
+
+    ${approvals ? `<div class="section" style="margin-top:32px">
+      <div class="sechead"><h2>Hosts allowed on this site</h2></div>
+      <p class="note">You run this deployment. Only these addresses (and yours) can start their own account here; anyone else signing in is turned away.</p>
+      <ul class="log" id="approvalList">
+        ${approvals.length ? approvals.map((a) => `<li><span class="bud"></span><span class="t">${esc(fmt.stamp(a.at))}</span>
+          <span>${esc(a.email)}${a.note ? ` \u00b7 ${esc(a.note)}` : ""}
+          <button class="btn sm" data-unapprove="${esc(a.email)}" style="margin-left:8px">Remove</button></span></li>`).join("")
+        : "<li><span>Nobody else yet.</span></li>"}
+      </ul>
+      <div class="field" style="margin-top:10px"><label for="apprEmail">Approve an address</label>
+        <div class="desc">They can then sign in with Google and set up their own listings, societies and Gmail.</div>
+        <input class="input" id="apprEmail" type="email" placeholder="friend@gmail.com"></div>
+      <div class="field"><label for="apprNote">Note</label><input class="input" id="apprNote" placeholder="Optional \u2014 who they are"></div>
+      <button class="btn primary" id="apprGo">Approve</button>
+    </div>` : ""}
+
+    <div class="section" style="margin-top:32px">
+      <div class="sechead"><h2>Activity</h2></div>
+      <p class="note">Changes to this account's settings, listings, societies and access \u2014 and who made them.</p>
       <ul class="log" id="auditlog"><li><span>Loading\u2026</span></li></ul>
     </div>`;
+
+  document.getElementById("accName").value = sessionInfo.account?.name || "";
   Data.audit().then((rows) => {
     const el = document.getElementById("auditlog");
     if (!el || !fresh(seq)) return;
     el.innerHTML = rows.length
-      ? rows.map((r) => `<li><span class="bud"></span><span class="t">${esc(fmt.stamp(r.at))}</span><span>${esc(r.text)}${r.ip ? ` <span class="idcount">\u00b7 ${esc(r.ip)}</span>` : ""}</span></li>`).join("")
+      ? rows.map((r) => `<li><span class="bud"></span><span class="t">${esc(fmt.stamp(r.at))}</span><span>${esc(r.text)}${r.by ? ` <span class="idcount">\u00b7 ${esc(r.by)}</span>` : ""}</span></li>`).join("")
       : "<li><span>Nothing yet.</span></li>";
   }).catch(() => {});
-  if (!canSetPin) return;
-  const inp = document.getElementById("newpin");
-  inp.oninput = () => { inp.value = inp.value.replace(/\D/g, "").slice(0, len); };
-  document.getElementById("savepin").onclick = async () => {
-    if (inp.value.length !== len) { toast(`Enter ${len} digits`); return; }
-    const res = await Data.setPasscode(inp.value);
-    if (!res.ok) { toast(res.reason || "The passcode was not changed"); return; }
-    // Changing it ends this session on the server, so go back to the lock.
-    toast("Passcode updated \u2014 unlock with the new one");
-    unlocked = false; showLock();
+  if (!isOwner) return;
+
+  document.getElementById("accSave").onclick = async () => {
+    const name = document.getElementById("accName").value.trim();
+    if (!name) { toast("Give the account a name"); return; }
+    const res = await Data.renameAccount(name);
+    if (!res.ok) { toast(res.message); return; }
+    sessionInfo = { ...sessionInfo, account: res.account };
+    toast("Account renamed"); refreshHostChip(); render();
   };
+  document.getElementById("invGo").onclick = async () => {
+    const email = document.getElementById("invEmail").value.trim();
+    if (!email) { toast("Enter their Google address"); return; }
+    const res = await Data.inviteMember(email);
+    toast(res.ok ? res.message : res.message || "That invitation was not sent");
+    if (res.ok) render();
+  };
+  body.querySelectorAll("[data-rmuser]").forEach((el) => el.onclick = async () => {
+    const res = await Data.removeMember(el.dataset.rmuser);
+    toast(res.ok ? "Access removed" : res.message); render();
+  });
+  body.querySelectorAll("[data-rminv]").forEach((el) => el.onclick = async () => {
+    const res = await Data.revokeInvite(el.dataset.rminv);
+    toast(res.ok ? "Invitation withdrawn" : res.message); render();
+  });
+  const appr = document.getElementById("apprGo");
+  if (appr) {
+    appr.onclick = async () => {
+      const email = document.getElementById("apprEmail").value.trim();
+      if (!email) { toast("Enter the address to approve"); return; }
+      const res = await Data.approve(email, document.getElementById("apprNote").value.trim() || undefined);
+      toast(res.ok ? `${email} can now start an account` : res.message); render();
+    };
+    body.querySelectorAll("[data-unapprove]").forEach((el) => el.onclick = async () => {
+      const res = await Data.unapprove(el.dataset.unapprove);
+      toast(res.ok ? "Removed from the list" : res.message); render();
+    });
+  }
 }
 
 // ---------- toast ----------
@@ -816,55 +939,63 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove("show"), CONFIG.ui.toastMs);
 }
 
-// ---------- admin lock ----------
+// ---------- signing in ----------
 let unlocked = false;
-// { admin, role, ownerTier } from the server; only it can know, since the
-// session is an HttpOnly cookie.
-let sessionInfo = { admin: false, role: null, ownerTier: false };
-async function showLock(err) {
+// What the server says about this browser: who is signed in, which account
+// they are in, and what sign-in methods exist. Only it can know — the session
+// is an HttpOnly cookie.
+let sessionInfo = { signedIn: false, role: null, email: null, name: null, account: null, accounts: [],
+                    platformOwner: false, google: false, devLogin: false };
+
+const SIGNIN_NOTES = {
+  "not-approved": "That Google account is not on the approved list for this site. Ask the site owner to add it, then sign in again.",
+  failed: "That sign-in did not complete. Please try again.",
+};
+
+async function showLock() {
   clearOverlays();
-  const len = CONFIG.auth.passcodeLength;
   const el = document.createElement("div");
   el.className = "lock"; el.id = "lockScreen";
+  const note = SIGNIN_NOTES[(location.hash.match(/^#signin-(.+)$/) || [])[1]];
   el.innerHTML = `<div class="lockcard">
     <div class="mk"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
-    <h2>GatePass</h2><p>Enter the admin passcode to continue.</p>
-    <div class="pin ${err ? "err" : ""}" id="pin">
-      ${Array.from({ length: len }, (_, i) => `<input inputmode="numeric" maxlength="1" autocomplete="off" data-i="${i}" aria-label="Digit ${i + 1}">`).join("")}
-    </div>
-    ${sessionInfo.ownerTier ? `<button class="btn sm ownerlink" id="ownerLink">Owner? Email me a sign-in link</button>` : ""}
-    ${location.hash === "#owner-link-expired" ? `<div class="lockhint">That sign-in link has expired or was already used. Ask for a new one.</div>` : ""}
-    <div class="lockerr" role="alert">${err ? (err.locked ? "Too many attempts. Try again shortly." : "Wrong passcode. Try again.") : ""}</div>
-    ${err && err.locked
-      ? `<div class="lockhint">Locked for ${Math.ceil((err.retryAfterSeconds || 60) / 60)} more minute(s).</div>`
-      : err && err.attemptsRemaining !== undefined
-      ? `<div class="lockhint">${err.attemptsRemaining} attempt(s) left before it locks.</div>`
-      : ""}
+    <h2>GatePass</h2>
+    <p>${sessionInfo.email && !sessionInfo.signedIn
+        ? `Signed in as ${esc(sessionInfo.email)}, but this address has no listings here yet.`
+        : "Sign in to manage your bookings and guest IDs."}</p>
+    ${note ? `<div class="lockhint" role="alert">${esc(note)}</div>` : ""}
+    ${sessionInfo.google
+      ? `<a class="btn primary" id="googleBtn" href="/api/auth/google/start">Sign in with Google</a>`
+      : `<div class="lockhint">Google sign-in is not set up on this server.</div>`}
+    ${sessionInfo.devLogin ? `<div class="field" style="margin-top:14px">
+        <label for="devEmail">Development sign-in</label>
+        <div class="desc">Local only. Type an address; no Google app needed.</div>
+        <input class="input" id="devEmail" type="email" placeholder="you@example.com" autocomplete="off">
+        <button class="btn" id="devGo" style="margin-top:8px">Sign in</button>
+      </div>` : ""}
+    <div class="lockerr" role="alert" id="signinErr"></div>
   </div>
   <div class="themerow" id="lockTheme"></div>`;
   document.body.appendChild(el);
   mountTheme(el.querySelector("#lockTheme"), false);
-  const ol = el.querySelector("#ownerLink");
-  if (ol) ol.onclick = async () => {
-    ol.disabled = true;
-    const r = await Data.requestOwnerLink();
-    toast(r.message);
-    ol.textContent = r.ok ? "Link sent \u2014 check the owner's inbox" : "Owner? Email me a sign-in link";
-    ol.disabled = r.ok;
+
+  const dev = el.querySelector("#devGo");
+  if (dev) dev.onclick = async () => {
+    const email = el.querySelector("#devEmail").value.trim();
+    if (!email) return;
+    const res = await Data.devLogin(email);
+    if (!res.ok) { el.querySelector("#signinErr").textContent = res.message; return; }
+    await enterApp();
   };
-  const inputs = [...el.querySelectorAll(".pin input")];
-  inputs[0].focus();
-  inputs.forEach((inp, i) => {
-    inp.oninput = async () => {
-      inp.value = inp.value.replace(/\D/g, "");
-      if (inp.value && i < len - 1) inputs[i + 1].focus();
-      if (!inputs.every((x) => x.value)) return;
-      const res = await Data.unlock(inputs.map((x) => x.value).join(""));
-      if (res.ok) { unlocked = true; el.remove(); mountApp(); }
-      else { el.remove(); showLock(res); }
-    };
-    inp.onkeydown = (e) => { if (e.key === "Backspace" && !inp.value && i > 0) inputs[i - 1].focus(); };
-  });
+}
+
+/** Read the session back and show the app, after any kind of sign-in. */
+async function enterApp() {
+  try { sessionInfo = await Data.session(); } catch { sessionInfo = { ...sessionInfo, signedIn: false }; }
+  unlocked = Boolean(sessionInfo.signedIn);
+  if (location.hash.startsWith("#signin-")) { try { history.replaceState(null, "", "#bookings"); } catch {} }
+  clearOverlays();
+  unlocked ? mountApp() : showLock();
 }
 
 // ---------- guest page (mobile) ----------
@@ -944,7 +1075,9 @@ async function showGuest(token) {
     showGuest(token);
   });
   const gb = el.querySelector("#gback");
-  if (gb) gb.onclick = () => { try { location.hash = ""; } catch (e) {} clearOverlays(); unlocked ? mountApp() : showLock(); };
+  // One path out: change the address and let the hashchange handler swap the
+  // screen, so Back and this button behave the same and nothing flashes.
+  if (gb) gb.onclick = () => { location.hash = lastAdminRoute; };
 }
 
 // ---------- boot ----------
@@ -952,13 +1085,30 @@ async function showGuest(token) {
 // listings change, or it goes stale until the next full page load.
 async function refreshHostChip() {
   const profile = await Data.profile();
-  document.getElementById("hostchip").innerHTML = `<div class="av">${esc(initials(profile.name))}</div>
-    <div class="who"><b>${sessionInfo.role === "owner" ? "Owner" : "Admin"}</b><br><span>${esc(fmt.count(profile.listingCount, "listing", "listings"))}</span></div>
-    <button class="btn sm" id="lockBtn" style="margin-left:auto" title="Sign out of this browser">Lock</button>`;
+  const who = sessionInfo.name || sessionInfo.email || "Signed in";
+  const others = (sessionInfo.accounts || []).filter((a) => a.id !== sessionInfo.account?.id);
+  document.getElementById("hostchip").innerHTML = `<div class="av">${esc(initials(who))}</div>
+    <div class="who"><b>${esc(sessionInfo.account?.name || "My listings")}</b><br>
+      <span>${esc(sessionInfo.role === "owner" ? "Host" : "Co-host")} \u00b7 ${esc(fmt.count(profile.listingCount, "listing", "listings"))}</span></div>
+    <button class="btn sm" id="lockBtn" style="margin-left:auto" title="Sign out of this browser">Sign out</button>
+    ${others.length ? `<select class="input" id="accSwitch" aria-label="Switch account" style="flex:0 0 100%;margin-top:8px">
+        <option value="">${esc(sessionInfo.account?.name || "This account")}</option>
+        ${others.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}
+      </select>` : ""}`;
   document.getElementById("lockBtn").onclick = async () => {
     try { await Data.lock(); } catch { /* already signed out */ }
-    unlocked = false; sessionInfo = { ...sessionInfo, admin: false, role: null };
+    unlocked = false;
+    sessionInfo = { ...sessionInfo, signedIn: false, role: null, account: null };
     showLock();
+  };
+  const sw = document.getElementById("accSwitch");
+  if (sw) sw.onchange = async () => {
+    if (!sw.value) return;
+    const res = await Data.switchAccount(sw.value);
+    if (!res.ok) { toast(res.message); return; }
+    // A different account means different bookings, listings and settings.
+    view.screen = "bookings"; view.bookingId = null;
+    await enterApp();
   };
 }
 async function mountApp() {
@@ -981,8 +1131,7 @@ async function boot() {
   if (token) { showGuest(token); return; }
   // The session lives in an HttpOnly cookie, so only the server can say whether
   // this browser holds one.
-  try { sessionInfo = await Data.session(); unlocked = sessionInfo.admin; } catch { unlocked = false; }
-  unlocked ? mountApp() : showLock();
+  await enterApp();
 }
 // A 401 mid-session means the cookie expired or the passcode changed. Show the
 // lock rather than an empty screen.
@@ -995,7 +1144,14 @@ setUnauthorisedHandler(() => {
 window.addEventListener("hashchange", () => {
   const t = guestToken();
   if (t) { showGuest(t); return; }
-  if (unlocked && !document.getElementById("guestScreen")) { routeToView(); render(); }
+  // Leaving a guest preview (Back, or "Back to admin"): take the guest page
+  // down and bring the admin side back at the address now in the bar.
+  if (document.getElementById("guestScreen")) {
+    clearOverlays();
+    if (unlocked) mountApp(); else showLock();
+    return;
+  }
+  if (unlocked) { routeToView(); render(); }
 });
 
 // ---------- live updates ----------

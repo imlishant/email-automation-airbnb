@@ -16,7 +16,7 @@ import { decrypt } from "../../files/crypto.js";
 import { putDocument } from "../../repo/bookingWrites.js";
 import { bookingIdForToken } from "../../repo/guestLinks.js";
 import { one, run, nowIso } from "../../db/client.js";
-import { getBooking, appSettings } from "../../repo/bookings.js";
+import { getBooking, appSettings, bookingInAccount } from "../../repo/bookings.js";
 
 const errOut = { type: "object", properties: { error: { type: "string" }, message: { type: "string" } } };
 const okOut = {
@@ -84,6 +84,11 @@ export async function registerUploads(app) {
     config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
     schema: { response: { 200: okOut, 400: errOut, 403: errOut, 404: errOut, 409: errOut, 413: errOut, 503: errOut } },
   }, async (req, reply) => {
+    // Scope before anything is read or stored: an id from another account is
+    // not a 403 to probe, it simply does not exist here.
+    if (!await bookingInAccount(client, req.accountId, req.params.id)) {
+      return reply.code(404).send({ error: "not_found" });
+    }
     try {
       const { file, docType } = await readUpload(req, maxBytes);
       const res = await accept(req.params.id, req.params.personId, file, docType, "admin");
@@ -101,7 +106,8 @@ export async function registerUploads(app) {
     const doc = await one(client,
       `SELECT d.id, d.file_ref, d.content_type, d.doc_type, d.deleted_at, p.name, b.id AS booking_id
        FROM documents d JOIN people p ON p.id = d.person_id JOIN bookings b ON b.id = p.booking_id
-       WHERE d.id = ?`, [req.params.documentId]);
+       JOIN listings l ON l.id = b.listing_id
+       WHERE d.id = ? AND l.account_id = ?`, [req.params.documentId, req.accountId]);
     if (!doc) return reply.code(404).send({ error: "not_found" });
     if (!doc.file_ref) {
       return reply.code(410).send({ error: "deleted", message: "This file was deleted on the retention schedule." });
@@ -133,7 +139,11 @@ export async function registerUploads(app) {
     onRequest: admin,
     schema: { response: { 200: { type: "object", properties: { ok: { type: "boolean" } } }, 404: errOut } },
   }, async (req, reply) => {
-    const doc = await one(client, "SELECT id, file_ref FROM documents WHERE id = ?", [req.params.documentId]);
+    const doc = await one(client,
+      `SELECT d.id, d.file_ref FROM documents d
+        JOIN people p ON p.id = d.person_id JOIN bookings b ON b.id = p.booking_id
+        JOIN listings l ON l.id = b.listing_id
+       WHERE d.id = ? AND l.account_id = ?`, [req.params.documentId, req.accountId]);
     if (!doc) return reply.code(404).send({ error: "not_found" });
     if (doc.file_ref) await app.files.remove(doc.file_ref).catch(() => {});
     // The row survives so "an ID was collected and sent" stays provable.

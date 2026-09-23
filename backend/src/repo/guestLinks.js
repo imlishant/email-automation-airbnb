@@ -41,13 +41,16 @@ export function tokenLooksValid(token, secret) {
  *   common path here does no reads at all.
  */
 export async function ensureGuestLink(client, bookingId, secret, known = null) {
+  // The link's window comes from the owning account's check-out time.
   const existing = known ? known.existing
     : await one(client, "SELECT token, expires_at FROM guest_links WHERE booking_id = ? AND revoked_at IS NULL", [bookingId]);
-  const booking = known ? { check_out: known.checkOut }
-    : await one(client, "SELECT check_out FROM bookings WHERE id = ?", [bookingId]);
+  const booking = known ? { check_out: known.checkOut, account_id: known.accountId }
+    : await one(client, `SELECT b.check_out, l.account_id FROM bookings b
+        JOIN listings l ON l.id = b.listing_id WHERE b.id = ?`, [bookingId]);
   if (!booking) return null;
 
-  const settings = known ? known.settings : await appSettings(client);
+  const settings = known ? known.settings : await appSettings(client, booking.account_id);
+  if (!settings) return null;
   const expiresAt = new Date(Derive.guestLinkExpiresAt({ checkOut: booking.check_out }, settings)).toISOString();
 
   if (existing && !tokenLooksValid(existing.token, secret)) {

@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { openDatabase, applyPragmas, query, one, run, newId, nowIso, transaction } from "../src/db/client.js";
 import { migrate, seedFirstRun, splitStatements } from "../src/db/migrate.js";
 import { Derive, RULES } from "../../shared/rules.js";
+import { seedAccount } from "./fixtures/session.js";
+let acc;   // every society and listing below belongs to this account
 
 let dir, db, client;
 
@@ -17,6 +19,7 @@ before(async () => {
   client = db.client;
   await migrate(db);
   await seedFirstRun(db, { passcodeHash: "hash-placeholder", checkInTime: "14:00", checkOutTime: "11:00" });
+  acc = await seedAccount(client);
 });
 after(async () => { await rm(dir, { recursive: true, force: true }); });
 
@@ -26,14 +29,14 @@ async function makeSociety(name = "Greenwood Society") {
   const id = newId("soc");
   // A distinct desk address per society, so tests about routing can actually
   // tell them apart.
-  await run(client, `INSERT INTO societies (id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?)`, [id, name, `desk-${id}@example.com`, null, "Dear {{listing}}", at(), at()]);
+  await run(client, `INSERT INTO societies (id,account_id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?)`, [id, acc, name, `desk-${id}@example.com`, null, "Dear {{listing}}", at(), at()]);
   return id;
 }
 async function makeListing(societyId, name = "Sea Breeze 2BHK") {
   const id = newId("lst");
-  await run(client, `INSERT INTO listings (id,name,ical_url,society_id,created_at,updated_at)
-    VALUES (?,?,?,?,?,?)`, [id, name, "https://example.com/c.ics", societyId, at(), at()]);
+  await run(client, `INSERT INTO listings (id,account_id,name,ical_url,society_id,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)`, [id, acc, name, "https://example.com/c.ics", societyId, at(), at()]);
   return id;
 }
 async function makeBooking(listingId, over = {}) {

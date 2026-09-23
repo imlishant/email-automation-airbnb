@@ -27,7 +27,7 @@ async function logActivity(exec, bookingId, { kind, actor, text, at = nowIso() }
 /** Load just enough to evaluate the rules, without the society and activity. */
 async function loadForRules(client, id) {
   const row = await one(client, `
-    SELECT b.*, l.name AS listing_name FROM bookings b
+    SELECT b.*, l.name AS listing_name, l.account_id FROM bookings b
     JOIN listings l ON l.id = b.listing_id WHERE b.id = ?`, [id]);
   if (!row) return null;
   const people = await query(client, `
@@ -35,7 +35,8 @@ async function loadForRules(client, id) {
     FROM people p LEFT JOIN documents d ON d.person_id = p.id
     WHERE p.booking_id = ? ORDER BY p.is_lead DESC, p.rowid`, [id]);
   return {
-    id: row.id, code: row.airbnb_code, listingId: row.listing_id, listingName: row.listing_name,
+    id: row.id, code: row.airbnb_code, accountId: row.account_id,
+    listingId: row.listing_id, listingName: row.listing_name,
     checkIn: row.check_in, checkOut: row.check_out, children: Number(row.children || 0),
     leadGuest: row.lead_guest || null, automation: row.automation,
     sentAt: row.sent_at || null, conflict: Boolean(row.conflict),
@@ -48,7 +49,8 @@ async function loadForRules(client, id) {
 async function editable(client, id) {
   const booking = await loadForRules(client, id);
   if (!booking) return { ok: false, reason: "not_found" };
-  const settings = await appSettings(client);
+  const settings = await appSettings(client, booking.accountId);
+  if (!settings) return { ok: false, reason: "not_found" };
   if (!Derive.documentsEditable(booking, settings)) return { ok: false, reason: "window_closed" };
   return { ok: true, booking, settings };
 }
@@ -87,7 +89,7 @@ export async function setAdultCount(client, id, count, { actor = "admin" } = {})
   });
 
   const after = await loadForRules(client, id);
-  bookingChanged(id);
+  bookingChanged(id, g.booking.accountId);
   return { ok: true, adults: after.people.length, blocked };
 }
 
@@ -121,7 +123,7 @@ export async function renamePerson(client, id, personId, name, { actor = "admin"
         : `${person.name} renamed to ${next}${actor === "guest" ? " (guest)" : ""}`,
     });
   });
-  bookingChanged(id);
+  bookingChanged(id, g.booking.accountId);
   return { ok: true, changed: true };
 }
 
@@ -160,7 +162,7 @@ export async function putDocument(client, id, personId, { docType, fileRef = nul
     });
     await tx.execute({ sql: "UPDATE bookings SET updated_at = ? WHERE id = ?", args: [nowIso(), id] });
   });
-  bookingChanged(id);
+  bookingChanged(id, g.booking.accountId);
   return { ok: true, replaced: replacing };
 }
 
@@ -179,7 +181,7 @@ export async function removeDocument(client, id, personId, { actor = "admin" } =
     });
     await tx.execute({ sql: "UPDATE bookings SET updated_at = ? WHERE id = ?", args: [nowIso(), id] });
   });
-  bookingChanged(id);
+  bookingChanged(id, g.booking.accountId);
   return { ok: true };
 }
 
@@ -195,7 +197,7 @@ export async function setAutomation(client, id, mode, { actor = "admin" } = {}) 
       text: mode === "before" ? "Auto-send set to 1 hour before check-in" : "Auto-send set to when all IDs are collected",
     });
   });
-  bookingChanged(id);
+  bookingChanged(id, booking.accountId);
   return { ok: true, changed: true };
 }
 
@@ -224,7 +226,7 @@ export async function sendBooking(client, id, transport, { actor = "admin", auto
     }
   }
 
-  const settings = await appSettings(client);
+  const settings = await appSettings(client, booking.accountId);
   const resend = Boolean(booking.sentAt);
   // Past the file delete there is nothing to attach, so a resend is impossible.
   if (resend && !Derive.canResend(booking, settings)) return { ok: false, reason: "files_deleted" };
@@ -301,7 +303,7 @@ export async function sendBooking(client, id, transport, { actor = "admin", auto
     });
   });
 
-  bookingChanged(id);
+  bookingChanged(id, booking.accountId);
   return { ok: true, resend, to, cc, delivery, attachments: built.attachments.length, totalBytes: built.totalBytes };
 }
 

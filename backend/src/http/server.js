@@ -10,20 +10,22 @@ import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { openDatabase, applyPragmas } from "../db/client.js";
 import { migrate, seedFirstRun } from "../db/migrate.js";
-import { initialisePasscode, authStatus } from "../auth/admin.js";
 import { ephemeralSecret } from "./session.js";
 import { registerHealth } from "./routes/health.js";
 import { registerAuth } from "./routes/auth.js";
 import { registerSettings } from "./routes/settings.js";
+import { registerAccount } from "./routes/account.js";
 import { registerBookings } from "./routes/bookings.js";
 import { registerBookingActions } from "./routes/booking-actions.js";
 import { chooseTransport } from "../mail/transport.js";
+import { transportForAccount, readAccountMail } from "../mail/account.js";
 import { registerGuest } from "./routes/guest.js";
 import { registerJobs } from "./routes/jobs.js";
 import { registerAudit } from "./audit.js";
 import { registerEvents } from "./routes/events.js";
 import { listAudit } from "../repo/audit.js";
-import { requireAdmin } from "./routes/auth.js";
+import { requireAdmin, forgetMembership } from "./routes/auth.js";
+import { notifyMembershipChanges } from "../repo/accounts.js";
 import { registerUploads, registerGuestUploads } from "./routes/uploads.js";
 import multipart from "@fastify/multipart";
 import { chooseStore } from "../files/store.js";
@@ -80,16 +82,22 @@ export async function buildServer(config, { logger = true } = {}) {
   await applyPragmas(db);
   await migrate(db, { log: (m) => app.log.info(m) });
   await seedFirstRun(db, { passcodeHash: "pending", ...camelTimes(config.times) });
-  await initialisePasscode(db.client, config.firstRunPasscode, { policy: config.auth });
-
-  // A server that cannot verify a passcode must not serve the admin side.
-  const status = await authStatus(db.client);
-  if (!status.configured) {
-    throw new Error(`refusing to start: admin passcode is not configured (${status.reason})`);
-  }
   app.decorate("db", db);
+  notifyMembershipChanges(forgetMembership);
   // Where encrypted ID documents live. "db" keeps them in the database itself.
   app.decorate("files", chooseStore(config, { client: db.client }));
+  // What sends for one account: their own connected Gmail if they have one,
+  // otherwise this deployment's transport (recording in development, or an
+  // SMTP_* setup for a single-host install).
+  app.decorate("mailFor", async (accountId) => {
+    const own = accountId
+      ? await transportForAccount(db.client, accountId, app.fileKey,
+          { maxAttachmentBytes: config.mail.maxAttachmentBytes })
+      : null;
+    return own
+      ? { transport: own, from: (await readAccountMail(db.client, accountId))?.fromEmail || config.mail.from }
+      : { transport: app.mail, from: config.mail.from };
+  });
   app.addHook("onClose", async () => { try { db.client.close(); } catch { /* already closed */ } });
 
   // --- cookies and rate limiting ------------------------------------------
@@ -154,6 +162,7 @@ export async function buildServer(config, { logger = true } = {}) {
   await app.register(registerHealth);
   await app.register(registerAuth, { prefix: "/api" });
   await app.register(registerSettings, { prefix: "/api" });
+  await app.register(registerAccount, { prefix: "/api" });
   await app.register(registerBookings, { prefix: "/api" });
   await app.register(registerBookingActions, { prefix: "/api" });
   await app.register(registerJobs, { prefix: "/api" });
@@ -163,7 +172,7 @@ export async function buildServer(config, { logger = true } = {}) {
       querystring: { type: "object", additionalProperties: false,
         properties: { before: { type: "string", maxLength: 40 } } },
     },
-  }, async (req) => ({ rows: await listAudit(app.db.client, { before: req.query.before || null }) }));
+  }, async (req) => ({ rows: await listAudit(app.db.client, req.accountId, { before: req.query.before || null }) }));
   await app.register(multipart, {
     limits: { fileSize: config.storage.maxBytes, files: 1, fields: 4 },
   });

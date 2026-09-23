@@ -10,17 +10,22 @@
 // files cannot all be removed keeps its row, and the next tick tries again.
 // ---------------------------------------------------------------------------
 import { query, run } from "../db/client.js";
-import { appSettings } from "../repo/bookings.js";
+import { allAccountTimes } from "../repo/bookings.js";
 import { Derive, addDays } from "../../../shared/rules.js";
 import { listChanged } from "../events.js";
 
 export async function findExpired(client, { now = Date.now() } = {}) {
-  const settings = await appSettings(client);
+  const times = await allAccountTimes(client);
   // SQL narrows to anything whose checkout is at least a day gone; Derive
-  // decides exactly, using the host's check-out time.
+  // decides exactly, using that account's own check-out time.
   const cutoff = addDays(new Date(now).toISOString().slice(0, 10), -1);
-  const rows = await query(client, "SELECT id, airbnb_code, check_in, check_out FROM bookings WHERE check_out <= ?", [cutoff]);
-  return rows.filter((r) => Derive.fullyExpired({ checkIn: r.check_in, checkOut: r.check_out }, settings, now));
+  const rows = await query(client, `
+    SELECT b.id, b.airbnb_code, b.check_in, b.check_out, l.account_id
+    FROM bookings b JOIN listings l ON l.id = b.listing_id WHERE b.check_out <= ?`, [cutoff]);
+  return rows.filter((r) => {
+    const settings = times.get(r.account_id);
+    return settings && Derive.fullyExpired({ checkIn: r.check_in, checkOut: r.check_out }, settings, now);
+  });
 }
 
 export async function purgeExpired(client, { store, now = Date.now(), log = () => {} } = {}) {
