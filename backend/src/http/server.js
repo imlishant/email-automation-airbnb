@@ -69,6 +69,19 @@ export async function buildServer(config, { logger = true } = {}) {
     bodyLimit: 1024 * 1024,           // JSON only here; uploads get their own route
   });
 
+  // An external pinger drives the scheduler (Render's free plan has no cron),
+  // and pingers POST with whatever content type they like — cron-job.org sends
+  // one Fastify answers 415 to. The tick takes no body at all, so a body sent
+  // under an unknown type is drained and ignored rather than refused. Routes
+  // that do take a body declare a schema, so this cannot smuggle anything in;
+  // multipart uploads keep their own parser, which is more specific.
+  app.addContentTypeParser("*", (req, payload, done) => {
+    let size = 0;
+    payload.on("data", (chunk) => { size += chunk.length; if (size > 1024) payload.destroy(); });
+    payload.on("end", () => done(null, undefined));
+    payload.on("error", () => done(null, undefined));
+  });
+
   app.decorate("config", config);
   // The mail transport. Until Phase 4 configures SMTP this refuses every send
   // rather than letting a booking read "Sent" with nothing delivered.

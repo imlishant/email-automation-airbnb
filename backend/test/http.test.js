@@ -167,3 +167,25 @@ test("unknown routes 404 as JSON and leak nothing", async () => {
   assert.equal(res.statusCode, 404);
   assert.deepEqual(res.json(), { error: "not_found" });
 });
+
+test("the scheduler ping works whatever content type a pinger sends", async () => {
+  // cron-job.org POSTs with no JSON body; Fastify answered 415 and the
+  // scheduler never ran. The tick takes no body, so the type does not matter.
+  const d = await mkdtemp(join(tmpdir(), "gatepass-tick-"));
+  const a = await buildServer(loadConfig({ DATABASE_URL: `file:${join(d, "t.db")}`,
+    JOBS_TICK_SECRET: "tick-secret-tick-secret", ...POLICY }), { logger: false });
+  try {
+    for (const headers of [
+      { "x-jobs-secret": "tick-secret-tick-secret" },
+      { "x-jobs-secret": "tick-secret-tick-secret", "content-type": "text/plain" },
+      { "x-jobs-secret": "tick-secret-tick-secret", "content-type": "application/x-www-form-urlencoded" },
+    ]) {
+      const res = await a.inject({ method: "POST", url: "/api/jobs/tick", headers, payload: "" });
+      assert.equal(res.statusCode, 200, JSON.stringify(headers));
+      assert.equal(res.json().ok, true);
+    }
+    // The secret is still the whole access control.
+    assert.equal((await a.inject({ method: "POST", url: "/api/jobs/tick",
+      headers: { "content-type": "text/plain" }, payload: "" })).statusCode, 401);
+  } finally { await a.close(); await rm(d, { recursive: true, force: true }); }
+});

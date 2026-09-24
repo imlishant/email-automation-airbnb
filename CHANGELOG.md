@@ -35,6 +35,10 @@ Security entries are always listed, even when the fix is small.
 
 ### Fixed
 
+- **The scheduler ping returned 415** to cron-job.org, so nothing automatic ran
+  on the deployed site: no sync, no auto-send, no daily delete. A bodyless POST
+  is now accepted whatever content type the pinger sends.
+
 - **"Send now" claimed success even when the email failed.** It now reports
   what actually happened, with the reason in the host's words.
 - The guest upload page squeezed the name, ID type and button onto one line,
