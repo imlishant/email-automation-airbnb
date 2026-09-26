@@ -14,7 +14,7 @@ import { newId, nowIso, run, one } from "../src/db/client.js";
 import { attachmentName, buildAttachments, AttachmentsUnavailable } from "../src/mail/attachments.js";
 import { localStore } from "../src/files/store.js";
 import { encrypt, loadKey } from "../src/files/crypto.js";
-import { addDays, toDay, fillTemplate } from "../../shared/rules.js";
+import { addDays, toDay, fillTemplate, DEFAULT_SUBJECT } from "../../shared/rules.js";
 import { signIn } from "./fixtures/session.js";
 let acc;   // the signed-in account every row below belongs to
 
@@ -234,4 +234,37 @@ test("every adult is named in the body, not only on the attachments", async () =
   assert.match(body, /Guests: Viji, Srikant, \(name not given\)/);
   assert.match(body, /1\. Viji\n2\. Srikant\n3\. \(name not given\)/);
   assert.match(body, /Total 3\./);
+});
+
+test("the subject is the society's to write, and is filled per booking", async () => {
+  // It used to be fixed in code. A desk that files by flat number needs its
+  // own wording, and a subject they cannot change is one they work around.
+  await run(client, "UPDATE societies SET subject_template = ? WHERE id = ?",
+    ["Entry for {{listing}} | {{adult_count}} adult(s) | ref {{booking_id}}", soc]);
+  await storeDocument(lead);
+  const res = await send();
+  assert.equal(res.statusCode, 200, JSON.stringify(res.json()));
+
+  const wire = received[received.length - 1];
+  assert.match(wire, /^Subject: Entry for Sea Breeze 2BHK \| 1 adult\(s\) \| ref HM/m);
+  assert.doesNotMatch(wire, /Subject: =\?UTF-8/, "still plain ASCII, so an old desk mailbox reads it as written");
+});
+
+test("a society with no subject of its own sends the wording it always did", async () => {
+  // Migration 009 backfilled existing societies, and anything still NULL —
+  // a row written before that, or by a test — falls back rather than sending
+  // an empty subject.
+  const row = await one(client, "SELECT subject_template FROM societies WHERE id = ?", [soc]);
+  assert.equal(row.subject_template, null, "this fixture never set one");
+  await storeDocument(lead);
+  assert.equal((await send()).statusCode, 200);
+  assert.match(received[received.length - 1], /^Subject: Guest IDs - Sea Breeze 2BHK - arriving \d{4}-\d{2}-\d{2}$/m);
+});
+
+test("an emptied subject falls back rather than sending a blank one", async () => {
+  // A subjectless email at a security desk reads as spam.
+  const { updateSociety } = await import("../src/repo/societies.js");
+  const accountId = (await one(client, "SELECT account_id FROM societies WHERE id = ?", [soc])).account_id;
+  const updated = await updateSociety(client, accountId, soc, { subject: "   " });
+  assert.equal(updated.subject, DEFAULT_SUBJECT);
 });

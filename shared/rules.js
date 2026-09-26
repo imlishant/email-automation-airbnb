@@ -156,9 +156,9 @@ export const Derive = {
    * is the cost of allowing replacement after sending, and it has to be visible
    * rather than silent (docs/PRODUCT_PRINCIPLES.md, 9).
    */
-  needsResend(b, s) {
+  needsResend(b, s, now = Date.now()) {
     if (!b.sentAt || !b.lastDocumentAt) return false;
-    if (!Derive.canResend(b, s)) return false;      // nothing left to send
+    if (!Derive.canResend(b, s, now)) return false;      // nothing left to send
     return Date.parse(b.lastDocumentAt) > Date.parse(b.sentAt);
   },
 
@@ -196,6 +196,14 @@ export const Derive = {
 };
 
 // ---------- email template ----------
+/**
+ * The subject a society starts with. Plain ASCII on purpose: an em-dash forces
+ * RFC 2047 encoding and folding, which every modern client decodes but an old
+ * mail system at a security desk may render as gibberish. The subject is the
+ * first thing the desk reads.
+ */
+export const DEFAULT_SUBJECT = "Guest IDs - {{listing}} - arriving {{check_in}}";
+
 /** One definition of the placeholders, so Settings and the filler cannot drift. */
 export const TEMPLATE_VARS = Object.freeze([
   Object.freeze({ token: "listing", describe: "the listing's name" }),

@@ -25,7 +25,8 @@ const societyOut = {
   type: "object",
   properties: {
     id: { type: "string" }, name: { type: "string" }, to: { type: "string" },
-    cc: { type: "string" }, template: { type: "string" }, listingCount: { type: "integer" },
+    cc: { type: "string" }, template: { type: "string" }, subject: { type: "string" },
+    listingCount: { type: "integer" },
   },
 };
 const listingOut = {
@@ -89,7 +90,8 @@ export async function registerSettings(app) {
     schema: {
       body: {
         type: "object", required: ["name", "to", "template"], additionalProperties: false,
-        properties: { name: str(200), to: emailish, cc: { type: "string", maxLength: 640 }, template: str(8000) },
+        properties: { name: str(200), to: emailish, cc: { type: "string", maxLength: 640 },
+          template: str(8000), subject: { type: "string", maxLength: 200 } },
       },
       response: { 201: societyOut },
     },
@@ -101,7 +103,8 @@ export async function registerSettings(app) {
       params: { type: "object", required: ["id"], properties: { id: str(64) } },
       body: {
         type: "object", additionalProperties: false, minProperties: 1,
-        properties: { name: str(200), to: emailish, cc: { type: "string", maxLength: 640 }, template: str(8000) },
+        properties: { name: str(200), to: emailish, cc: { type: "string", maxLength: 640 },
+          template: str(8000), subject: { type: "string", maxLength: 200 } },
       },
       response: { 200: societyOut, 404: errorOut },
     },

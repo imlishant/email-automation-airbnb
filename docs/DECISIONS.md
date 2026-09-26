@@ -503,3 +503,21 @@ where SMTP is allowed, and for local work.
 hosts other than its test users can connect a Gmail. `gmail.send` is a
 sensitive scope, so publishing may require Google's verification once there are
 real users beyond the test list.
+
+## The email subject belongs to the society (2026-09-26)
+
+It was fixed in code: `Guest IDs - <listing> - arriving <date>`. Societies file
+mail their own way — by flat number, by block, by a reference their desk
+recognises — and a subject a host cannot change is one they work around by
+writing the real subject into the body.
+
+So it is a template per society, filled with the same placeholders as the body,
+and shown on the booking's preview so the host sees what the desk will see.
+
+Two rules kept:
+
+- **Plain ASCII.** An em-dash forces RFC 2047 encoding, which every modern
+  client decodes and an old mailbox at a gate desk may render as gibberish. The
+  default stays ASCII; a host who types an em-dash gets one, knowingly.
+- **Never blank.** An emptied subject falls back to the default. A subjectless
+  email at a security desk reads as spam.

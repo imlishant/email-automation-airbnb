@@ -102,6 +102,7 @@ export async function registerBookings(app) {
               properties: {
                 id: { type: "string" }, name: { type: "string" },
                 to: { type: "string" }, cc: { type: "string" }, template: { type: "string" },
+                subject: { type: "string" },
               },
             },
             activity: {

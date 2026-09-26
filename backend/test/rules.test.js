@@ -144,32 +144,39 @@ test("IDs stay editable for as long as the guest link lives", () => {
 test("replacing an ID after sending makes a resend owed, visibly", () => {
   const all = [{ lead: true, documentType: "Aadhaar" }, { lead: false, documentType: "Passport" }];
   const sent = "2026-09-19T10:00:00.000Z";
+  // Pinned to a moment inside this booking's window. Without it the test read
+  // "the files are long deleted" once real time passed the fixture's dates,
+  // and quietly asserted nothing.
+  const during = Date.parse("2026-09-21T12:00:00.000Z");
 
-  assert.equal(Derive.needsResend(booking({ people: all, sentAt: sent }), times), false, "no document change");
+  assert.equal(Derive.needsResend(booking({ people: all, sentAt: sent }), times, during), false, "no document change");
   assert.equal(
-    Derive.needsResend(booking({ people: all, sentAt: sent, lastDocumentAt: "2026-09-19T09:00:00.000Z" }), times),
+    Derive.needsResend(booking({ people: all, sentAt: sent, lastDocumentAt: "2026-09-19T09:00:00.000Z" }), times, during),
     false, "the ID predates the send"
   );
   assert.equal(
-    Derive.needsResend(booking({ people: all, sentAt: sent, lastDocumentAt: "2026-09-19T11:00:00.000Z" }), times),
+    Derive.needsResend(booking({ people: all, sentAt: sent, lastDocumentAt: "2026-09-19T11:00:00.000Z" }), times, during),
     true, "the society is holding a stale attachment"
   );
   assert.equal(
-    Derive.needsResend(booking({ people: all, lastDocumentAt: "2026-09-19T11:00:00.000Z" }), times),
+    Derive.needsResend(booking({ people: all, lastDocumentAt: "2026-09-19T11:00:00.000Z" }), times, during),
     false, "never sent, so nothing to resend"
   );
   // Past the file delete there is nothing left to resend, so stop nagging.
   const b = booking({ people: all, sentAt: sent, lastDocumentAt: "2026-09-19T11:00:00.000Z" });
   const after = Derive.idFilesDeletedAt(b, times) + 1;
-  assert.equal(Derive.needsResend(b, times, after), false || Derive.canResend(b, times, after) === false);
+  assert.equal(Derive.canResend(b, times, after), false, "the files are gone");
+  assert.equal(Derive.needsResend(b, times, after), false, "so the host is not nagged about a resend that cannot happen");
 });
 
 test("a replaced ID never triggers an automatic re-send", () => {
   const all = [{ lead: true, documentType: "Aadhaar" }, { lead: false, documentType: "Passport" }];
   const b = booking({ people: all, sentAt: "2026-09-19T10:00:00.000Z", lastDocumentAt: "2026-09-19T11:00:00.000Z" });
-  assert.equal(Derive.sendDue(b, times, Date.now()), false,
+  // Pinned inside the booking's window, like the test above.
+  const during = Date.parse("2026-09-21T12:00:00.000Z");
+  assert.equal(Derive.sendDue(b, times, during), false,
     "sending a passport twice unasked is worse than a stale attachment the host can see");
-  assert.equal(Derive.needsResend(b, times), true, "but the host is told");
+  assert.equal(Derive.needsResend(b, times, during), true, "but the host is told");
 });
 
 test("there is exactly ONE retention instant: nothing outlives the others", () => {

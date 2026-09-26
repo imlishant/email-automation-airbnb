@@ -10,7 +10,7 @@
 //      anyway (docs/TECH_STACK.md §5) so cost stays flat if that ever changes.
 // ---------------------------------------------------------------------------
 import { query, one } from "../db/client.js";
-import { Derive, addDays } from "../../../shared/rules.js";
+import { Derive, addDays, DEFAULT_SUBJECT } from "../../../shared/rules.js";
 
 /** The shape shared/rules.js expects. Nothing derived is included. */
 function shapeBooking(row, people = []) {
@@ -68,6 +68,7 @@ const BASE = `
 // separately: on Turso every extra statement is a network hop.
 const DETAIL = `${BASE.replace("s.name AS society_name",
   "s.name AS society_name, s.desk_email_to AS s_to, s.desk_email_cc AS s_cc, s.template AS s_template, " +
+  "s.subject_template AS s_subject, " +
   "ast.check_in_time AS ci_time, ast.check_out_time AS co_time")}
   JOIN account_settings ast ON ast.account_id = l.account_id`;
 
@@ -199,7 +200,8 @@ export async function getBooking(client, id, { accountId = null } = {}) {
   const booking = shapeBooking(row, peopleRes.rows.map(shapePerson));
   // Resolved through the listing, live, for an unsent booking.
   booking.society = row.society_id
-    ? { id: row.society_id, name: row.society_name, to: row.s_to, cc: row.s_cc || "", template: row.s_template }
+    ? { id: row.society_id, name: row.society_name, to: row.s_to, cc: row.s_cc || "",
+        template: row.s_template, subject: row.s_subject || DEFAULT_SUBJECT }
     : null;
   booking.activity = activityRes.rows.map((a) => ({ at: a.at, kind: a.kind, actor: a.actor, text: a.text }));
   booking.times = { checkInTime: row.ci_time, checkOutTime: row.co_time };

@@ -251,17 +251,19 @@ Found by using the prototype rather than by planning.
       its people, activity, guest link and jobs. If any file cannot be deleted
       the row is kept and retried, because an orphaned encrypted file would
       never be deleted. Runs last in every tick.
-- [x] **Owner tier.** Single-use magic link to `OWNER_EMAIL` only (the request
-      cannot name an address), 15-minute expiry, only a hash stored, 3 requests
-      per 10 minutes. The role is inside the signed session so it cannot be
-      edited client-side. Owner-only: passcode change, society edit/delete,
-      listing disconnect/delete. **Opt-in** — with no `OWNER_EMAIL` every admin
-      can do everything, so the host is never locked out of their own settings.
-- [x] Audit log of admin actions — one table of audited routes, names captured before a delete, no secret ever in the text, lockouts recorded, shown in Settings → Admin access
+- [x] **Owner tier.** Superseded on 2026-09-23 by accounts: the host who owns
+      an account is `owner`, a co-host is `admin`, and the role is re-read from
+      the memberships table on every request. Owner-only: the sending Gmail, a
+      society's desk address, who has access, and deletions. The magic-link
+      mechanism this item originally described is gone.
+- [x] Audit log of admin actions — one table of audited routes, names captured before a delete, no secret ever in the text, and the person who did it, shown in Settings → Access & activity
 - [x] SSE live updates — the stream carries only a booking id, never data; a guest hears only their own booking; verified in a real second browser tab
-- [ ] Backups: Turso point-in-time restore plus a nightly SQL dump to R2, and a
-      **restore rehearsal** — a backup never restored is a guess. (Replaces the
-      Litestream item: the database is Turso, not a local SQLite file.)
+- [ ] Backups: Turso point-in-time restore plus a nightly dump kept off Turso,
+      and a **restore rehearsal** — a backup never restored is a guess. More
+      urgent since 2026-09-23: the database now also holds accounts, the
+      encrypted ID photos and every host's encrypted sending credential, so
+      losing it loses more than bookings. (R2 was dropped; pick a destination
+      when this is scheduled.)
 - [x] **Load test** — `npm run loadtest`, 1x against 100x, every budget
       checked. It found three real problems, all fixed: the booking detail made
       9 database round trips (now 2, via `batch()`); the list loaded every
@@ -270,7 +272,8 @@ Found by using the prototype rather than by planning.
       measured (150MB, against a real baseline of ~172MB — now 256MB, half the
       host).
 - [ ] Adopt Preact + htm **only** if `app.js` passes ~1,500 lines or two screens
-      need the same stateful widget
+      need the same stateful widget. At 1,251 lines on 2026-09-24 — watch it,
+      do not act on it.
 
 ## Backlog — raised by the host after first deploy (2026-09-22)
 
@@ -292,3 +295,37 @@ Not scheduled. Each is its own phase, agreed before building.
    someone edits it. Ideas: show the booking code more prominently and link it
    to the Airbnb reservation page; let the host add a short nickname/note per
    booking; nudge for the adult count on the list, not only in detail.
+
+4. **A first run that explains itself.** A newly approved host signs in to an
+   empty Bookings page with no hint of the order: society → listing → connect
+   Gmail → share a guest link. Nothing is wrong, but nothing guides either.
+
+5. **Drop the dead passcode tables.** `admin_auth` and `owner_links` are unused
+   since accounts landed; migration `007` deliberately left them for one
+   release. A later migration removes them.
+
+6. **Airbnb guest messaging.** Sketched on 2026-09-22 and deliberately not
+   built. Airbnb's API is closed to individual hosts, so the only legitimate
+   route is a partner PMS (roughly $25–45/month) whose own API we build
+   against. It also fights this product's shape: messages must be kept, while
+   GatePass deletes everything a day after checkout, and webhooks need a server
+   that does not sleep. If it happens, it is a separate service sharing
+   sign-in, not a tab in here.
+
+## Found by using it in production (2026-09-24)
+
+Fixed as they appeared, recorded so the pattern is visible: **the deployment
+environment broke things the test suite could not see.**
+
+- [x] Render serves the repo root — backend source and docs were public. Now
+      only `frontend/` and `shared/` are served.
+- [x] Render blocks outbound SMTP, so a host's own Gmail was unreachable. Now
+      sent through the Gmail API over HTTPS.
+- [x] The scheduler ping returned 415 to cron-job.org, so **nothing automatic
+      ran at all** on the deployed site. A bodyless POST is now accepted
+      whatever content type a pinger sends.
+- [x] "Send now" reported success even when the send failed.
+- [x] The guest upload page was unreadable on a phone.
+- [ ] **Nothing watches the tick.** If the pinger stops, or every send starts
+      failing, the first sign is a guest held at a gate. Something should say
+      so — a "last successful tick" line on the Bookings page, at minimum.

@@ -24,6 +24,12 @@ Security entries are always listed, even when the fix is small.
 
 ### Added
 
+- **The email subject is the host's to write**, per society, with the same
+  placeholders as the body and shown filled in on the booking's preview.
+  Migration `009_subject_template.sql` writes the old fixed wording into every
+  existing society, so nothing changes until it is edited. An emptied subject
+  falls back to the default rather than sending a blank one.
+
 - **Sending through the Gmail API** (`Settings → Sending email → Connect with
   Google`). Render blocks outbound SMTP, so app-password sending times out
   there; this is HTTPS and works, from the host's own address, with send-only
@@ -34,6 +40,12 @@ Security entries are always listed, even when the fix is small.
   nobody has named yet appears as "(name not given)" rather than being dropped.
 
 ### Fixed
+
+- **Two rules tests had quietly stopped testing anything.** Their fixture used
+  fixed dates, so once the real calendar passed them the booking read as "files
+  already deleted" and the assertions held for the wrong reason. `needsResend`
+  now takes a time like every other rule, the tests pin it, and one assertion
+  that was written as `false || x` — which can never fail — says what it meant.
 
 - **The scheduler ping returned 415** to cron-job.org, so nothing automatic ran
   on the deployed site: no sync, no auto-send, no daily delete. A bodyless POST

@@ -29,6 +29,8 @@ const AUDITED = {
     // A changed desk address changes where IDs are emailed, so it is named.
     text: (req, name) => req.body.to !== undefined
       ? `Society "${name}": desk address changed to ${req.body.to}`
+      : req.body.subject !== undefined
+      ? `Society "${name}": email subject changed`
       : `Society "${name}" edited (${fields(req.body)})`,
   },
   "DELETE /api/societies/:id": { kind: "society", lookup: nameOf("societies"), text: (req, name) => `Society "${name}" deleted` },

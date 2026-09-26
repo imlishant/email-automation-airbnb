@@ -6,7 +6,7 @@
 
 import { CONFIG } from "./config.js";
 import { prepareForUpload, FileRejected } from "./upload.js";
-import { Data, Derive, parseDay, fillTemplate, RULES, TEMPLATE_VARS, setUnauthorisedHandler } from "./data.js";
+import { Data, Derive, parseDay, fillTemplate, RULES, TEMPLATE_VARS, DEFAULT_SUBJECT, setUnauthorisedHandler } from "./data.js";
 
 // ---------- formatting ----------
 // Intl rather than hand-rolled month and day tables: correct in every locale
@@ -345,6 +345,7 @@ async function renderDetail(seq) {
       <div class="mail">
         <div class="mrow"><span class="k">To</span><span class="v">${esc(dest.to)}</span></div>
         <div class="mrow"><span class="k">Cc</span><span class="v">${esc(dest.cc || "—")}</span></div>
+        <div class="mrow"><span class="k">Subject</span><span class="v">${esc(fillTemplate(society.subject || DEFAULT_SUBJECT, { ...b, societyName: society.name }, fmt.day))}</span></div>
         <div class="mbody">${esc(fillTemplate(society.template, { ...b, societyName: society.name }, fmt.day))}</div>
         <div class="attn">${b.people.filter((p) => p.documentType).map((p) => `<span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>${esc(p.name.split(" ")[0])} — ${esc(p.documentType)}</span>`).join("")
           || `<span class="idcount">No files attached yet.</span>`}</div>
@@ -726,6 +727,9 @@ async function renderSetSocieties(body, seq) {
       <div class="field"><label for="nsName">Name</label><input class="input" id="nsName" placeholder="e.g. Prestige Lakeside"></div>
       <div class="field"><label for="nsTo">Send to</label><div class="desc">The society's security / gate desk.</div><input class="input" id="nsTo" type="email"></div>
       <div class="field"><label for="nsCc">Cc</label><div class="desc">Optional. Comma-separated.</div><input class="input" id="nsCc"></div>
+      <div class="field"><label for="nsSub">Email subject</label>
+        <div class="desc">What the security desk sees first. The same placeholders work here.</div>
+        <input class="input" id="nsSub"></div>
       <div class="field"><label for="nsTpl">Email template</label>
         <div class="desc">Placeholders fill per booking: ${TEMPLATE_VARS.map((v) => `<span class="var" title="${esc(v.describe)}">{{${esc(v.token)}}}</span>`).join("")}</div>
         <textarea class="input" id="nsTpl"></textarea></div>
@@ -734,10 +738,12 @@ async function renderSetSocieties(body, seq) {
   // esc() leaves quotes alone, so these values are set as properties, never
   // through markup (docs/CODING_STANDARDS.md).
   societies.forEach((s) => {
-    const to = body.querySelector(`#to_${s.id}`), cc = body.querySelector(`#cc_${s.id}`), tpl = body.querySelector(`#tpl_${s.id}`);
+    const to = body.querySelector(`#to_${s.id}`), cc = body.querySelector(`#cc_${s.id}`),
+          tpl = body.querySelector(`#tpl_${s.id}`), sub = body.querySelector(`#sub_${s.id}`);
     if (to) to.value = s.to || "";
     if (cc) cc.value = s.cc || "";
     if (tpl) tpl.value = s.template || "";
+    if (sub) sub.value = s.subject || "";
   });
   body.querySelectorAll("[data-sochead]").forEach((el) => el.onclick = () => {
     view.openSoc = view.openSoc === el.dataset.sochead ? null : el.dataset.sochead; render();
@@ -748,17 +754,20 @@ async function renderSetSocieties(body, seq) {
       to: body.querySelector(`#to_${id}`).value.trim(),
       cc: body.querySelector(`#cc_${id}`).value.trim(),
       template: body.querySelector(`#tpl_${id}`).value,
+      subject: body.querySelector(`#sub_${id}`).value,
     });
     // Only claim success on success: this is the address IDs get emailed to.
     toast(res.ok ? "Society saved" : (res.message || "That was not saved"));
   });
   if (!view.addSoc) { document.getElementById("addSoc").onclick = () => { view.addSoc = true; render(); }; return; }
   document.getElementById("nsTpl").value = STARTER_TEMPLATE;
+  document.getElementById("nsSub").value = DEFAULT_SUBJECT;
   document.getElementById("nsCancel").onclick = () => { view.addSoc = false; render(); };
   document.getElementById("nsSave").onclick = async () => {
     const val = (id) => document.getElementById(id).value.trim();
     if (!val("nsName") || !val("nsTo") || !val("nsTpl")) { toast("Fill in the name, desk email and template"); return; }
-    const res = await Data.addSociety({ name: val("nsName"), to: val("nsTo"), cc: val("nsCc"), template: val("nsTpl") });
+    const res = await Data.addSociety({ name: val("nsName"), to: val("nsTo"), cc: val("nsCc"),
+      template: val("nsTpl"), subject: val("nsSub") });
     if (!res.ok) { toast(res.message || "That was not saved"); return; }
     view.addSoc = false; view.openSoc = res.society.id;
     toast("Society added — now connect its listings"); render();
@@ -787,6 +796,9 @@ function socCard(s, listingCount) {
     <div class="sbody">
       <div class="field"><label for="to_${esc(s.id)}">Send to</label><div class="desc">The society's security / gate desk.</div><input class="input" id="to_${esc(s.id)}" type="email"></div>
       <div class="field"><label for="cc_${esc(s.id)}">Cc</label><div class="desc">Manager, clubhouse, etc. Comma-separated.</div><input class="input" id="cc_${esc(s.id)}"></div>
+      <div class="field"><label for="sub_${esc(s.id)}">Email subject</label>
+        <div class="desc">What the security desk sees first. The same placeholders work here.</div>
+        <input class="input" id="sub_${esc(s.id)}"></div>
       <div class="field"><label for="tpl_${esc(s.id)}">Email template</label>
         <div class="desc">Placeholders fill per booking: ${TEMPLATE_VARS.map((v) => `<span class="var" title="${esc(v.describe)}">{{${esc(v.token)}}}</span>`).join("")}</div>
         <textarea class="input" id="tpl_${esc(s.id)}"></textarea></div>

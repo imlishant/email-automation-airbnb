@@ -3,6 +3,7 @@
 // ORM (docs/TECH_STACK.md §3).
 // ---------------------------------------------------------------------------
 import { query, one, run, newId, nowIso } from "../db/client.js";
+import { DEFAULT_SUBJECT } from "../../../shared/rules.js";
 
 const shape = (r) => ({
   id: r.id,
@@ -10,6 +11,7 @@ const shape = (r) => ({
   to: r.desk_email_to,
   cc: r.desk_email_cc || "",
   template: r.template,
+  subject: r.subject_template || DEFAULT_SUBJECT,
   listingCount: r.listing_count ?? 0,
 });
 
@@ -29,11 +31,13 @@ export async function getSociety(client, accountId, id) {
   return row ? shape(row) : null;
 }
 
-export async function createSociety(client, accountId, { name, to, cc = "", template }) {
+export async function createSociety(client, accountId, { name, to, cc = "", template, subject }) {
   const id = newId("soc");
   const at = nowIso();
-  await run(client, `INSERT INTO societies (id,account_id,name,desk_email_to,desk_email_cc,template,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?)`, [id, accountId, name.trim(), to.trim(), cc.trim(), template, at, at]);
+  await run(client, `INSERT INTO societies
+      (id,account_id,name,desk_email_to,desk_email_cc,template,subject_template,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?)`,
+    [id, accountId, name.trim(), to.trim(), cc.trim(), template, (subject || "").trim() || DEFAULT_SUBJECT, at, at]);
   return getSociety(client, accountId, id);
 }
 
@@ -46,6 +50,11 @@ export async function updateSociety(client, accountId, id, patch) {
   if (patch.to !== undefined) { sets.push("desk_email_to = ?"); args.push(patch.to.trim()); }
   if (patch.cc !== undefined) { sets.push("desk_email_cc = ?"); args.push((patch.cc || "").trim()); }
   if (patch.template !== undefined) { sets.push("template = ?"); args.push(patch.template); }
+  // An emptied subject falls back to the default rather than sending a blank
+  // one: a subjectless email at a security desk reads as spam.
+  if (patch.subject !== undefined) {
+    sets.push("subject_template = ?"); args.push(patch.subject.trim() || DEFAULT_SUBJECT);
+  }
   if (!sets.length) return getSociety(client, accountId, id);
   sets.push("updated_at = ?"); args.push(nowIso(), id, accountId);
   await run(client, `UPDATE societies SET ${sets.join(", ")} WHERE id = ? AND account_id = ?`, args);

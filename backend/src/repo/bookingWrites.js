@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 import { one, run, query, newId, nowIso, transaction } from "../db/client.js";
 import { getBooking, appSettings } from "./bookings.js";
-import { Derive, fillTemplate } from "../../../shared/rules.js";
+import { Derive, fillTemplate, DEFAULT_SUBJECT } from "../../../shared/rules.js";
 import { buildAttachments, AttachmentsUnavailable } from "../mail/attachments.js";
 import { bookingChanged } from "../events.js";
 
@@ -237,18 +237,23 @@ export async function sendBooking(client, id, transport, { actor = "admin", auto
   let society;
   if (!to) {
     society = await one(client, `
-      SELECT s.id, s.name, s.desk_email_to, s.desk_email_cc, s.template
+      SELECT s.id, s.name, s.desk_email_to, s.desk_email_cc, s.template, s.subject_template
       FROM bookings b JOIN listings l ON l.id = b.listing_id JOIN societies s ON s.id = l.society_id
       WHERE b.id = ?`, [id]);
     if (!society) return { ok: false, reason: "no_society" };
     to = society.desk_email_to; cc = society.desk_email_cc || ""; societyId = society.id; societyName = society.name;
   } else {
-    society = await one(client, "SELECT id, name, template FROM societies WHERE id = ?", [booking.sentSocietyId || ""]) || null;
+    society = await one(client, "SELECT id, name, template, subject_template FROM societies WHERE id = ?",
+      [booking.sentSocietyId || ""]) || null;
   }
-  const template = society?.template
-    || (await one(client, `SELECT s.template FROM bookings b JOIN listings l ON l.id = b.listing_id
-         JOIN societies s ON s.id = l.society_id WHERE b.id = ?`, [id]))?.template
-    || "";
+  // A resend reuses the society pinned at send time; if that society is gone,
+  // fall back to the one the listing points at now.
+  const fallback = society?.template ? null
+    : await one(client, `SELECT s.template, s.subject_template FROM bookings b
+         JOIN listings l ON l.id = b.listing_id JOIN societies s ON s.id = l.society_id
+         WHERE b.id = ?`, [id]);
+  const template = society?.template || fallback?.template || "";
+  const subjectTemplate = society?.subject_template || fallback?.subject_template || "";
 
   // Decrypt every ID into memory. If ANY of them cannot be produced, the send
   // is refused: an email with a missing ID is worse than no email, because the
@@ -270,13 +275,17 @@ export async function sendBooking(client, id, transport, { actor = "admin", auto
           + `\nThese will follow before arrival; please contact the host if they do not.`
         : "");
 
+  // The subject is filled from the society's own template, with the same
+  // placeholders as the body. A society that has never edited it keeps the
+  // wording it was already receiving (migration 009).
+  const subject = fillTemplate(subjectTemplate || DEFAULT_SUBJECT, { ...booking, societyName }, (iso) => iso)
+    .replace(/\s+/g, " ").trim().slice(0, 200)
+    || fillTemplate(DEFAULT_SUBJECT, { ...booking, societyName }, (iso) => iso);
+
   const message = {
     from: mailFrom,
     to, cc,
-    // Plain ASCII on purpose: an em-dash forces RFC 2047 encoding and folding,
-    // which every modern client decodes but an old mail system at a society
-    // desk may render as gibberish. The subject is the first thing they read.
-    subject: `Guest IDs - ${booking.listingName} - arriving ${booking.checkIn}`,
+    subject,
     body,
     attachments: built.attachments,
     bookingId: id,

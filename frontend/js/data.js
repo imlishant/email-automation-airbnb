@@ -11,10 +11,10 @@
 // they cannot disagree about whether a booking is ready.
 // ---------------------------------------------------------------------------
 import { CONFIG } from "./config.js";
-import { Derive, RULES, parseDay, fillTemplate, TEMPLATE_VARS } from "../../shared/rules.js";
+import { Derive, RULES, parseDay, fillTemplate, TEMPLATE_VARS, DEFAULT_SUBJECT } from "../../shared/rules.js";
 
 // Re-exported so screens import their rules from one place.
-export { Derive, RULES, parseDay, fillTemplate, TEMPLATE_VARS };
+export { Derive, RULES, parseDay, fillTemplate, TEMPLATE_VARS, DEFAULT_SUBJECT };
 
 const API = "/api";
 
@@ -140,8 +140,8 @@ const Data = {
 
   // --- societies ----------------------------------------------------------
   async societies() { return request("/societies"); },
-  async addSociety({ name, to, cc, template }) {
-    try { return { ok: true, society: await request("/societies", { method: "POST", body: { name, to, cc, template } }) }; }
+  async addSociety({ name, to, cc, template, subject }) {
+    try { return { ok: true, society: await request("/societies", { method: "POST", body: { name, to, cc, template, subject } }) }; }
     catch (e) { return { ok: false, reason: e.reason, message: e.message }; }
   },
   async saveSociety(id, patch) {
