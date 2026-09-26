@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="GatePass">
+  <!-- The sidebar mark, drawn for a 16px tab: the calendar is squarer and the
+       tick heavier than the inline SVG, because hairlines disappear at that
+       size. Same accent as --accent in styles.css. -->
+  <rect width="64" height="64" rx="14" fill="#14675A"/>
+  <g fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="14" y="17" width="36" height="33" rx="5"/>
+    <path d="M14 27h36"/>
+    <path d="M24 12v7M40 12v7"/>
+    <path d="M24 38.5l5.5 5.5L40 33.5"/>
+  </g>
+</svg>

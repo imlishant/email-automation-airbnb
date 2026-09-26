@@ -24,6 +24,11 @@ Security entries are always listed, even when the fix is small.
 
 ### Added
 
+- **A tab icon.** There was none, so browsers showed a blank page icon and a
+  phone home-screen shortcut got a grey square. An SVG for the tab, a PNG for
+  iOS, a web manifest so it installs to a home screen with a name and a colour,
+  and a test that all three are actually served.
+
 - **The email subject is the host's to write**, per society, with the same
   placeholders as the body and shown filled in on the booking's preview.
   Migration `009_subject_template.sql` writes the old fixed wording into every

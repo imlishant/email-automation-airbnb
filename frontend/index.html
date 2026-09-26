@@ -10,6 +10,13 @@
 if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
 </script>
 <title>GatePass — guest IDs to security, on time</title>
+<!-- The tab icon. SVG first, because it stays sharp at any size and works in
+     both light and dark browser chrome; the PNG is for iOS, which ignores SVG
+     icons, and for a home-screen shortcut. -->
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#14675A">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">

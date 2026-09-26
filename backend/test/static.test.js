@@ -24,6 +24,27 @@ test("the app loads at the site root", async () => {
   assert.equal((await get("/shared/rules.js")).statusCode, 200, "browser import of the shared rules");
 });
 
+test("the tab icon and the manifest are served, with usable types", async () => {
+  // A missing favicon is a blank page in the tab and a generic square on a
+  // phone's home screen — the first thing anyone sees of this.
+  const svg = await get("/icon.svg");
+  assert.equal(svg.statusCode, 200);
+  assert.match(svg.headers["content-type"], /image\/svg\+xml/);
+
+  const png = await get("/icon-180.png");
+  assert.equal(png.statusCode, 200);
+  assert.match(png.headers["content-type"], /image\/png/);
+
+  const manifest = await get("/site.webmanifest");
+  assert.equal(manifest.statusCode, 200);
+  assert.equal(JSON.parse(manifest.body).name, "GatePass");
+
+  // And the page actually points at them.
+  const page = await get("/");
+  assert.match(page.body, /<link rel="icon" href="icon\.svg"/);
+  assert.match(page.body, /apple-touch-icon/);
+});
+
 test("old /frontend/index.html links redirect to the root", async () => {
   const res = await get("/frontend/index.html");
   assert.equal(res.statusCode, 302);
