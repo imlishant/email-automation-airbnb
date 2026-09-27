@@ -35,6 +35,11 @@ test("the tab icon and the manifest are served, with usable types", async () => 
   assert.equal(png.statusCode, 200);
   assert.match(png.headers["content-type"], /image\/png/);
 
+  // /favicon.ico is requested by name by things that read no <link> tag.
+  const ico = await get("/favicon.ico");
+  assert.equal(ico.statusCode, 200);
+  assert.ok(ico.rawPayload.length > 100, "a real icon, not an empty file");
+
   const manifest = await get("/site.webmanifest");
   assert.equal(manifest.statusCode, 200);
   assert.equal(JSON.parse(manifest.body).name, "GatePass");
