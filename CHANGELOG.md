@@ -24,6 +24,11 @@ Security entries are always listed, even when the fix is small.
 
 ### Added
 
+- The tab now says **GatePass**, not a sentence, and each screen names itself:
+  `Bookings`, the booking's code, `Settings`, `Upload your ID` for a guest. The
+  code rather than the guest's name, because a tab title lands in browser
+  history and in any screenshot of the window.
+
 - **A tab icon.** There was none, so browsers showed a blank page icon and a
   phone home-screen shortcut got a grey square. An SVG for the tab, a PNG for
   iOS, a web manifest so it installs to a home screen with a name and a colour,

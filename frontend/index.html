@@ -9,7 +9,10 @@
 (function(){try{var t=localStorage.getItem("gatepass.theme");
 if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
 </script>
-<title>GatePass — guest IDs to security, on time</title>
+<!-- Short on purpose: a tab shows roughly twenty characters, and this is a
+     private tool that is never indexed, so the title has no search job to do.
+     app.js sets a per-screen title once it knows which screen you are on. -->
+<title>GatePass</title>
 <!-- The tab icon. SVG first, because it stays sharp at any size and works in
      both light and dark browser chrome; the PNG is for iOS, which ignores SVG
      icons, and for a home-screen shortcut. -->

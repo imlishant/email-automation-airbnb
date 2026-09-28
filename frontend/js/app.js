@@ -148,7 +148,7 @@ function mountTheme(host, label) {
 }
 
 // ---------- state ----------
-const view = { screen: "bookings", bookingId: null, listingId: null, tab: "listings", openSoc: null, editListing: null, addSoc: false, mailFlash: null };
+const view = { screen: "bookings", bookingId: null, listingId: null, tab: "listings", openSoc: null, editListing: null, addSoc: false, mailFlash: null, bookingCode: null };
 const main = document.getElementById("main");
 
 // Every render awaits data, so a second render can start before the first
@@ -193,9 +193,21 @@ function syncAddress() {
   try { history[isRoute ? "pushState" : "replaceState"](null, "", want); } catch { /* sandboxed */ }
 }
 
+/**
+ * The tab's name. Short, and never a guest's name: a title lands in browser
+ * history and in any screenshot of the window, so it carries the booking code
+ * — which identifies the booking without naming a person.
+ */
+function setTitle(what) {
+  document.title = what ? `${what} \u00b7 GatePass` : "GatePass";
+}
+
 async function render() {
   const seq = ++renderSeq;
   syncAddress();
+  setTitle(view.screen === "settings" ? "Settings"
+    : view.screen === "detail" ? (view.bookingCode || "Booking")
+    : "Bookings");
   document.querySelectorAll(".nav-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.nav === (view.screen === "detail" ? "bookings" : view.screen)));
   try {
@@ -300,6 +312,8 @@ function cardHTML(b) {
 async function renderDetail(seq) {
   const [b, times] = await Promise.all([Data.booking(view.bookingId), Data.settings()]);
   if (!fresh(seq)) return;
+  view.bookingCode = b.code || null;
+  setTitle(view.bookingCode || "Booking");
   const s = Derive.status(b), allIn = Derive.complete(b), society = b.society;
   const editable = Derive.documentsEditable(b, times);
   const dest = Derive.destination(b);
@@ -1015,6 +1029,7 @@ async function showLock() {
   clearOverlays();
   const el = document.createElement("div");
   el.className = "lock"; el.id = "lockScreen";
+  setTitle(null);
   const note = SIGNIN_NOTES[(location.hash.match(/^#signin-(.+)$/) || [])[1]];
   el.innerHTML = `<div class="lockcard">
     <div class="mk"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
@@ -1066,6 +1081,7 @@ async function showGuest(token) {
   const b = await Data.guestBooking(token);
   const el = document.createElement("div");
   el.className = "gpage"; el.id = "guestScreen";
+  setTitle("Upload your ID");
   const brand = `<div class="gbrand"><div class="mk"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h18M7 3v4M17 3v4"/><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M9 15l2 2 4-4"/></svg></div><div class="nm">GatePass check-in</div><div class="themerow" data-guest-theme></div></div>`;
 
   if (!b) {
