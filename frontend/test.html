@@ -11,6 +11,10 @@
 
   Run:  npm start  (in backend/), then open /test.html
 -->
+<!-- The real stylesheet, because the screens are rendered for real here and
+     the motion checks read the motion tokens out of it. The page's own styles
+     follow, so the results list stays plain. -->
+<link rel="stylesheet" href="css/styles.css">
 <style>
   body{font:14px/1.6 ui-monospace,monospace;margin:0;padding:24px;background:#fff;color:#111}
   #out{white-space:pre-wrap}
@@ -35,6 +39,7 @@
 <script type="module">
 import { CONFIG, Data, Derive, RULES, view, render, mountApp, showGuest, esc, initials, __setUnlocked } from "./js/app.js";
 import { fillTemplate, daysBetween, parseDay, toDay, addDays } from "../shared/rules.js";
+import { leave, enter, prefersReduced, ENTER, EXIT } from "./js/motion.js";
 
 const R = [];
 const ok = (n, c, d = "") => R.push((c ? "PASS " : "FAIL ") + n + (c ? "" : "   <<< " + d));
@@ -161,6 +166,38 @@ try {
        { listingName: "X", code: "HM1", people: [{}] }, (d) => d)));
   ok("helpers survive odd input",
      initials("") === "?" && initials("Priya") === "P" && esc(null) === "" && esc("<b>") === "&lt;b&gt;");
+
+  // --- motion -------------------------------------------------------------
+  // The one property of the motion system worth a test: an element that is
+  // leaving stays on screen long enough to be seen leaving, and is inert
+  // while it does. Everything else is CSS and has to be looked at.
+  ok("the motion tokens are defined once, in CSS",
+     getComputedStyle(document.documentElement).getPropertyValue("--ease-out").includes("cubic-bezier"),
+     "js/motion.js reads its timings from these, so they cannot drift apart");
+  ok("enter and exit durations are real numbers, and exits are faster",
+     ENTER() > 0 && EXIT() > 0 && EXIT() < ENTER(), `enter=${ENTER()} exit=${EXIT()}`);
+
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;left:-9999px";
+  document.body.appendChild(probe);
+  enter(probe);
+  ok("an element that appears is marked open", probe.dataset.state === "open");
+
+  const closing = leave(probe);
+  if (prefersReduced()) {
+    await closing;
+    ok("with reduced motion, leaving resolves at once and nothing waits",
+       probe.dataset.state === "closed");
+  } else {
+    ok("while leaving, the element is still mounted", probe.isConnected && probe.dataset.state === "closing");
+    ok("...and takes no clicks while it does", getComputedStyle(probe).pointerEvents === "none");
+    ok("...and is hidden from screen readers", probe.getAttribute("aria-hidden") === "true");
+    const t0 = performance.now();
+    await closing;
+    ok("...and the wait matches the exit duration", performance.now() - t0 >= EXIT() - 40,
+       `waited ${Math.round(performance.now() - t0)}ms for ${EXIT()}ms`);
+  }
+  probe.remove();
 
   // --- tidy up -----------------------------------------------------------
   if (added.ok) await Data.deleteListing(added.listing.id);

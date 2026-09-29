@@ -24,6 +24,14 @@ Security entries are always listed, even when the fix is small.
 
 ### Added
 
+- **A motion system**, iOS-flavoured and applied throughout: one set of curves
+  and durations as CSS tokens, a presence helper (`frontend/js/motion.js`) so
+  everything that appears also visibly disappears, press feedback on buttons,
+  and scrolling that glides on the same curve and cancels on touch. Only
+  `transform` and `opacity` are animated. Reduced motion is a tested path, not
+  an afterthought — the browser checks run in both modes. See
+  `docs/DESIGN.md`, which is now the standard for the sibling projects too.
+
 - The tab now says **GatePass**, not a sentence, and each screen names itself:
   `Bookings`, the booking's code, `Settings`, `Upload your ID` for a guest. The
   code rather than the guest's name, because a tab title lands in browser
@@ -50,6 +58,9 @@ Security entries are always listed, even when the fix is small.
   nobody has named yet appears as "(name not given)" rather than being dropped.
 
 ### Fixed
+
+- `frontend/test.html` never loaded the app's stylesheet, so any check that
+  read a computed style was quietly measuring nothing. It does now.
 
 - **Two rules tests had quietly stopped testing anything.** Their fixture used
   fixed dates, so once the real calendar passed them the booking read as "files

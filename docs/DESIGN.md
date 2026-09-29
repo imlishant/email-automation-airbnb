@@ -225,3 +225,112 @@ work, not as polish.
 5. If it is on the guest page, count the taps first (`PRODUCT_PRINCIPLES.md`, 2).
 6. Confirm the page still does not scroll sideways. The quickest check is that
    `document.documentElement.scrollWidth` equals `window.innerWidth` at 320px.
+
+## Motion (2026-09-29)
+
+The house style: **subtle, fast, and the same everywhere** — closer to a native
+iOS app than to a website. Motion is not decoration here; it tells you where a
+thing came from and where it went. This section is the standard for this
+project and for anything built alongside it.
+
+### Tokens — decided once, in `css/styles.css`
+
+```css
+--ease-out: cubic-bezier(.32,.72,0,1);   /* entering: iOS's sheet curve */
+--ease-in:  cubic-bezier(.4,0,1,1);      /* leaving */
+--dur-enter: 260ms;
+--dur-exit:  190ms;                      /* exits are faster than entrances */
+--dur-micro: 160ms;                      /* colour, border, press */
+```
+
+Two rules about these. **Nothing picks its own curve or duration** — if a new
+element needs a different feel, the token set is wrong and changes for
+everybody. And **`js/motion.js` reads these values out of the stylesheet**
+rather than repeating them, so a timing and the animation it times cannot
+drift apart. There is a check for it in `frontend/test.html`.
+
+Exits are quicker than entrances on purpose: a slow entrance reads as
+considered, a slow exit reads as lag.
+
+### The presence problem, and the helper
+
+An element removed from the DOM cannot animate, because it is already gone. So
+anything leaving is **kept mounted**, marked `data-state="closing"`, and
+removed only when its exit has finished — `leave()` and `leaveAndRemove()` in
+`js/motion.js`. While closing it gets `pointer-events: none` and
+`aria-hidden="true"`: it is on screen to finish a gesture, and is not content
+any more.
+
+A `setTimeout` backs up the `animationend` listener, because a backgrounded tab
+may never fire the event and a promise that never settles would strand the
+element on screen for ever.
+
+### Only transform and opacity
+
+Never width, height, top, left or margin. Those force the browser to lay the
+page out again, on every frame, which is what makes an older phone stutter.
+
+**The one thing this costs us:** accordions (Societies) *reveal* with a fade and
+a small slide rather than unfolding to their height, because a height animation
+is a layout animation. It reads as an iOS disclosure rather than a squeeze, and
+it is the right trade.
+
+### Full re-render, and how motion survives it
+
+The app re-renders a whole screen on every change, including changes pushed from
+the server. A naive enter animation would replay the entire page every time a
+guest uploads an ID.
+
+So there are two separate ideas:
+
+- **A screen** animates when it is genuinely a *different* screen
+  (`animateScreen`, keyed on screen + booking/tab). A re-render of the same
+  screen does nothing.
+- **An element inside a screen** carries `data-anim="<key>"`, and `markNew()`
+  remembers which keys a screen showed last time. Only keys that were not there
+  before animate in. That is how the send button pops in when the last ID
+  lands, while everything around it stays still.
+
+`data-anim-style="pop"` opts an element into fade + scale(0.6 → 1) instead of
+the default fade + slide.
+
+**Known limit, stated rather than hidden:** exits animate where *we* control
+the toggle — overlays, the accordion, the inline editor, the add-society form,
+the toast — because those code paths can await the animation before
+re-rendering. An element that disappears because the *server* said so cannot
+animate out: the re-render has already replaced the node. Fixing that properly
+means keeping removed nodes around, which is a diffing framework, and that is a
+Phase-5 question in `docs/ROADMAP.md`, not a motion one.
+
+### Reduced motion is a first-class path, not an afterthought
+
+Under `prefers-reduced-motion: reduce`, CSS disables every animation and
+transition, **and** `js/motion.js` resolves exits immediately so nothing waits
+on an animation that will not play.
+
+The trap that caught us once, worth remembering: **an element whose visible
+state came from an animation's fill disappears entirely when animations are
+off.** The toast rests at `opacity: 0` and is revealed by its keyframes, so the
+reduced-motion block has to set it visible outright. Any new element built this
+way needs the same treatment, and the browser checks run in both modes.
+
+### Press feedback
+
+Buttons, nav items, tabs and booking cards scale to `0.94` while held, over
+`--dur-micro`. Colour, background and border changes use the same duration.
+Under reduced motion the scale is dropped and only the colour change remains.
+
+### Bottom sheets
+
+Specified, deliberately not built: **there is no dialog or side panel in this
+app**, so there is nothing to make a sheet of, and shipping an unused
+swipe-to-close helper would be dead code. When the first dialog arrives, it
+follows this spec — under 600px it slides up from `translateY(100%)` with a
+grab handle, follows the finger while dragged, and closes past ~90px or on a
+fast flick, otherwise springs back on `--ease-out`.
+
+### Programmatic scrolling
+
+`glideTo()` moves the page on the same curve as everything else, and **cancels
+the moment the reader touches anything** — wheel, touch, pointer or key. A page
+that keeps scrolling under your finger feels broken however pretty the easing.

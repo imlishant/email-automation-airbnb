@@ -7,6 +7,7 @@
 import { CONFIG } from "./config.js";
 import { prepareForUpload, FileRejected } from "./upload.js";
 import { Data, Derive, parseDay, fillTemplate, RULES, TEMPLATE_VARS, DEFAULT_SUBJECT, setUnauthorisedHandler } from "./data.js";
+import { enter, leave, leaveAndRemove, markNew, animateScreen, glideTo } from "./motion.js";
 
 // ---------- formatting ----------
 // Intl rather than hand-rolled month and day tables: correct in every locale
@@ -202,9 +203,15 @@ function setTitle(what) {
   document.title = what ? `${what} \u00b7 GatePass` : "GatePass";
 }
 
+let lastScreenKey = null;
 async function render() {
   const seq = ++renderSeq;
   syncAddress();
+  // The screen animates when it IS a different screen; a re-render of the same
+  // one (a guest uploading, a tick arriving) must not replay it.
+  const screenKey = `${view.screen}:${view.screen === "detail" ? view.bookingId : view.tab}`;
+  const screenChanged = screenKey !== lastScreenKey;
+  lastScreenKey = screenKey;
   setTitle(view.screen === "settings" ? "Settings"
     : view.screen === "detail" ? (view.bookingCode || "Booking")
     : "Bookings");
@@ -217,7 +224,10 @@ async function render() {
   } catch (e) {
     if (seq === renderSeq) main.innerHTML = `<div class="card"><div class="empty">Could not load that. ${esc(e.message)}</div></div>`;
   }
-  if (seq === renderSeq) window.scrollTo(0, 0);
+  if (seq !== renderSeq) return;
+  animateScreen(main, screenKey, screenChanged);
+  markNew(main, screenKey);
+  glideTo(0);
 }
 const fresh = (seq) => seq === renderSeq;
 
@@ -366,7 +376,7 @@ async function renderDetail(seq) {
       </div>
       <div class="auto">${CONFIG.automation.map((a) => radio(b, a)).join("")}</div>
       <div class="sendbar">
-        <button class="btn primary lg" id="send" ${allIn && (!b.sentAt || Derive.canResend(b, times)) ? "" : "disabled"}><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>${b.sentAt ? "Resend now" : "Send now"}</button>
+        <button class="btn primary lg" id="send" data-anim="send" data-anim-style="pop" ${allIn && (!b.sentAt || Derive.canResend(b, times)) ? "" : "disabled"}><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>${b.sentAt ? "Resend now" : "Send now"}</button>
         <span class="hint">${staleAttachment
           ? `An ID changed after this was sent \u2014 the desk is holding the old one. Resend to fix it.`
           : allIn
@@ -463,7 +473,7 @@ function idRow(p, editable) {
   } else {
     acts = `<span class="idcount">Window closed</span>`;
   }
-  return `<div class="idrow">
+  return `<div class="idrow" data-anim="p:${esc(p.id)}">
     <div class="av">${esc(initials(p.name))}</div>
     <div class="info"><div class="nm">${nameField(p, editable)}${p.lead ? '<span class="tag">LEAD GUEST</span>' : ""}</div>
       <div class="st ${has ? "done" : ""}">${has ? `${esc(p.documentType)} uploaded` : "No ID uploaded yet"}</div></div>
@@ -644,7 +654,8 @@ async function renderSetListings(body, seq) {
   body.querySelectorAll("[data-editlst]").forEach((el) => el.onclick = () => {
     view.editListing = el.dataset.editlst; render();
   });
-  body.querySelectorAll("[data-cancellst]").forEach((el) => el.onclick = () => {
+  body.querySelectorAll("[data-cancellst]").forEach((el) => el.onclick = async () => {
+    await leave(el.closest(".listing-row"));
     view.editListing = null; render();
   });
   body.querySelectorAll("[data-savelst]").forEach((el) => el.onclick = async () => {
@@ -736,7 +747,7 @@ async function renderSetSocieties(body, seq) {
   body.innerHTML = `
     <p class="setnote">Each society keeps its own security desk email and its own template. Listings in the same society share one; different societies each use their own.</p>
     ${societies.map((s) => socCard(s, listings.filter((l) => l.societyId === s.id).length)).join("")}
-    ${view.addSoc ? `<div class="listing-row" style="flex-direction:column;align-items:stretch;gap:10px">
+    ${view.addSoc ? `<div class="listing-row" data-anim="newsoc" style="flex-direction:column;align-items:stretch;gap:10px">
       <div class="nm">New society</div>
       <div class="field"><label for="nsName">Name</label><input class="input" id="nsName" placeholder="e.g. Prestige Lakeside"></div>
       <div class="field"><label for="nsTo">Send to</label><div class="desc">The society's security / gate desk.</div><input class="input" id="nsTo" type="email"></div>
@@ -759,8 +770,13 @@ async function renderSetSocieties(body, seq) {
     if (tpl) tpl.value = s.template || "";
     if (sub) sub.value = s.subject || "";
   });
-  body.querySelectorAll("[data-sochead]").forEach((el) => el.onclick = () => {
-    view.openSoc = view.openSoc === el.dataset.sochead ? null : el.dataset.sochead; render();
+  body.querySelectorAll("[data-sochead]").forEach((el) => el.onclick = async () => {
+    const closing = view.openSoc === el.dataset.sochead;
+    // Collapsing: let the body animate out while it still exists. A re-render
+    // would replace the node mid-animation and the close would just blink.
+    if (closing) await leave(el.parentElement.querySelector(".sbody"));
+    view.openSoc = closing ? null : el.dataset.sochead;
+    render();
   });
   body.querySelectorAll("[data-savesoc]").forEach((el) => el.onclick = async () => {
     const id = el.dataset.savesoc;
@@ -776,7 +792,10 @@ async function renderSetSocieties(body, seq) {
   if (!view.addSoc) { document.getElementById("addSoc").onclick = () => { view.addSoc = true; render(); }; return; }
   document.getElementById("nsTpl").value = STARTER_TEMPLATE;
   document.getElementById("nsSub").value = DEFAULT_SUBJECT;
-  document.getElementById("nsCancel").onclick = () => { view.addSoc = false; render(); };
+  document.getElementById("nsCancel").onclick = async () => {
+    await leave(document.getElementById("nsName").closest(".listing-row"));
+    view.addSoc = false; render();
+  };
   document.getElementById("nsSave").onclick = async () => {
     const val = (id) => document.getElementById(id).value.trim();
     if (!val("nsName") || !val("nsTo") || !val("nsTpl")) { toast("Fill in the name, desk email and template"); return; }
@@ -848,7 +867,7 @@ async function renderSetEmail(body, seq) {
         ${connected ? "Connected with Google." : "Connected with an app password (SMTP)."}
         ${mail.verifiedAt ? `Test email sent ${esc(fmt.stamp(mail.verifiedAt))}.` : "Not tested yet."}
         ${mail.lastError ? `<br><b>Last error:</b> ${esc(mail.lastError)}` : ""}</div>
-      ${isOwner ? `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      ${isOwner ? `<div data-anim="mailacts" style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
         <button class="btn primary" id="mailTest">Send a test email</button>
         <button class="btn" id="mailForget">Disconnect</button></div>` : ""}
     </div>` : `<div class="listing-row"><div style="color:var(--muted);font-size:13px">No Gmail connected yet, so nothing can be sent.</div></div>`}
@@ -1007,9 +1026,9 @@ let toastTimer;
 function toast(msg) {
   const t = document.getElementById("toast");
   t.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>${esc(msg)}`;
-  t.classList.add("show");
+  enter(t);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), CONFIG.ui.toastMs);
+  toastTimer = setTimeout(() => leave(t), CONFIG.ui.toastMs);
 }
 
 // ---------- signing in ----------
@@ -1074,7 +1093,9 @@ async function enterApp() {
 
 // ---------- guest page (mobile) ----------
 function clearOverlays() {
-  ["lockScreen", "guestScreen"].forEach((id) => { const n = document.getElementById(id); if (n) n.remove(); });
+  // Fire and forget: the app underneath is already rendered, so the overlay
+  // fades out over it. Awaiting would stall the screen it is uncovering.
+  ["lockScreen", "guestScreen"].forEach((id) => leaveAndRemove(document.getElementById(id)));
 }
 async function showGuest(token) {
   clearOverlays();
@@ -1105,7 +1126,7 @@ async function showGuest(token) {
     <div class="ghelp">One ID per adult, including friends joining you. Add each person's name — the gate desk
       matches the name to the ID. You can replace a blurry photo any time before checkout.
       <span class="gquiet">Photos are resized and stripped of location data on your phone before they are sent.</span></div>
-    ${b.people.map((p) => `<div class="grow"><div class="ghead"><div class="av">${esc(initials(p.name))}</div>
+    ${b.people.map((p) => `<div class="grow" data-anim="p:${esc(p.id)}"><div class="ghead"><div class="av">${esc(initials(p.name))}</div>
       <div class="gi"><div class="gn">${nameField(p, true)}</div>
         <div class="gs ${p.documentType ? "done" : ""}">${p.lead ? '<span class="you">You</span> \u00b7 ' : ""}${p.documentType ? `${esc(p.documentType)} uploaded` : "choose the ID type, then add a photo"}</div></div></div>
       <div class="gact">${p.documentType
@@ -1148,6 +1169,9 @@ async function showGuest(token) {
     if (!res.ok) toast(res.message || "This link is no longer active");
     showGuest(token);
   });
+  // The guest overlay is rebuilt on every change, so the same newness test
+  // applies: a row added by tapping "+" animates in, the rest stay still.
+  markNew(el, "guest");
   const gb = el.querySelector("#gback");
   // One path out: change the address and let the hashchange handler swap the
   // screen, so Back and this button behave the same and nothing flashes.

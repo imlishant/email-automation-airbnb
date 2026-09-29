@@ -9,6 +9,17 @@
     --wa:#1F8F55;
     --shadow:0 1px 2px rgba(33,31,29,.04), 0 8px 24px -12px rgba(33,31,29,.12);
     --radius:14px; --radius-sm:10px;
+
+    /* Motion. One set of curves and durations for the whole app, so nothing
+       here is decided per-element. Entering uses iOS's sheet curve, which
+       decelerates hard at the end; leaving is faster and linear-out, because a
+       slow exit feels like lag rather than polish. docs/DESIGN.md. */
+    --ease-out:cubic-bezier(.32,.72,0,1);
+    --ease-in:cubic-bezier(.4,0,1,1);
+    --dur-enter:260ms;
+    --dur-exit:190ms;
+    --dur-micro:160ms;
+
     color-scheme:light;
   }
   @media (prefers-color-scheme: dark){
@@ -45,7 +56,40 @@
   button,input,textarea,select{font-family:inherit;color:inherit}
   button{cursor:pointer}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
-  @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+  /* ---------- motion system ----------
+     Only `transform` and `opacity` are animated anywhere: those are the two
+     properties the compositor can handle without laying the page out again,
+     which is what keeps this smooth on an older phone. No width, height, top,
+     left or margin — see docs/DESIGN.md for the one place that costs us
+     something (accordions reveal rather than unfold). */
+  @keyframes m-fade-rise{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+  @keyframes m-fade-sink{from{opacity:1;transform:translate(-50%,0)}to{opacity:0;transform:translate(-50%,6px)}}
+  @keyframes m-overlay-in{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:scale(1)}}
+  @keyframes m-overlay-out{from{opacity:1;transform:scale(1)}to{opacity:0;transform:scale(.99)}}
+  @keyframes m-screen-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes m-panel-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes m-panel-out{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-6px)}}
+  @keyframes m-pop-in{from{opacity:0;transform:scale(.6)}to{opacity:1;transform:scale(1)}}
+
+  /* Anything that appears animates in; anything leaving is kept mounted by
+     js/motion.js, marked data-state="closing", and animates out. */
+  .m-in{animation:m-panel-in var(--dur-enter) var(--ease-out) both}
+  .m-pop{animation:m-pop-in var(--dur-enter) var(--ease-out) both}
+  [data-state="closing"]{pointer-events:none}
+  .lock[data-state="closing"],.gpage[data-state="closing"]{animation:m-overlay-out var(--dur-exit) var(--ease-in) both}
+  #main.m-screen{animation:m-screen-in var(--dur-enter) var(--ease-out) both}
+
+  /* Press feedback: the button gives way under the thumb, then springs back. */
+  .btn:active,.nav-btn:active,.tab:active,.bk:active{transform:scale(.94)}
+  /* Reduced motion is honoured in both halves: the CSS below, and
+     js/motion.js, which unmounts immediately instead of waiting for an exit. */
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none!important;animation:none!important}
+    .btn:active,.nav-btn:active,.tab:active,.bk:active{transform:none}
+    /* Anything whose visible state came from an animation's fill has to be
+       given that state outright, or turning motion off hides it. */
+    .toast[data-state="open"]{opacity:1;transform:translate(-50%,0)}
+  }
 
   .app{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:100vh}
   .side{border-right:1px solid var(--line);padding:22px 16px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh}
@@ -53,7 +97,7 @@
   .brand .mark{width:30px;height:30px;border-radius:9px;background:var(--accent);display:grid;place-items:center;flex:none}
   .brand .mark svg{width:17px;height:17px;stroke:#fff}
   .brand .name{font-family:"Fraunces",serif;font-weight:600;font-size:20px;letter-spacing:-.01em}
-  .nav-btn{display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:none;border:none;color:var(--muted);font-size:14.5px;font-weight:500;padding:9px 11px;border-radius:9px;transition:background .15s,color .15s}
+  .nav-btn{display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:none;border:none;color:var(--muted);font-size:14.5px;font-weight:500;padding:9px 11px;border-radius:9px;transition:background var(--dur-micro) var(--ease-out),color var(--dur-micro) var(--ease-out),transform var(--dur-micro) var(--ease-out)}
   .nav-btn svg{width:18px;height:18px;stroke:currentColor;flex:none}
   .nav-btn:hover{background:var(--surface-2);color:var(--ink)}
   .nav-btn.active{background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
@@ -122,7 +166,7 @@
   .group-label:first-of-type{margin-top:0}
 
   .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
-  .bk{display:flex;align-items:center;gap:16px;padding:16px 18px;width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:10px;transition:border-color .15s,transform .1s;box-shadow:var(--shadow)}
+  .bk{display:flex;align-items:center;gap:16px;padding:16px 18px;width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:10px;transition:border-color var(--dur-micro) var(--ease-out),transform var(--dur-micro) var(--ease-out);box-shadow:var(--shadow)}
   .bk:hover{border-color:var(--line-strong);transform:translateY(-1px)}
   .bk .cal{width:46px;height:52px;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);display:flex;flex-direction:column;align-items:center;justify-content:center;flex:none}
   .bk .cal .mo{font-size:10px;font-weight:700;color:var(--red);letter-spacing:.04em}
@@ -184,7 +228,7 @@
   .idrow .acts{display:flex;align-items:center;gap:8px;flex:none;flex-wrap:wrap;justify-content:flex-end}
   @media(max-width:560px){.idrow{flex-wrap:wrap}.idrow .acts{width:100%;justify-content:flex-start;margin-top:4px}}
 
-  .btn{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;padding:8px 13px;border-radius:9px;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);transition:background .15s,border-color .15s}
+  .btn{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;padding:8px 13px;border-radius:9px;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);transition:background var(--dur-micro) var(--ease-out),border-color var(--dur-micro) var(--ease-out),color var(--dur-micro) var(--ease-out),transform var(--dur-micro) var(--ease-out)}
   .btn svg{width:15px;height:15px;stroke:currentColor}
   a.btn{text-decoration:none}
   .btn:hover{background:var(--surface-2)}
@@ -210,10 +254,10 @@
   .chip svg{width:14px;height:14px;stroke:var(--accent)}
 
   .auto{display:flex;flex-direction:column;gap:10px;margin:16px 0 18px}
-  .radio{display:flex;align-items:flex-start;gap:11px;padding:13px 15px;border:1px solid var(--line);border-radius:var(--radius-sm);cursor:pointer;transition:border-color .15s,background .15s}
+  .radio{display:flex;align-items:flex-start;gap:11px;padding:13px 15px;border:1px solid var(--line);border-radius:var(--radius-sm);cursor:pointer;transition:border-color var(--dur-micro) var(--ease-out),background var(--dur-micro) var(--ease-out)}
   .radio:hover{border-color:var(--line-strong)}
   .radio.on{border-color:var(--accent);background:var(--accent-soft)}
-  .radio .ring{width:18px;height:18px;border-radius:50%;border:2px solid var(--line-strong);flex:none;margin-top:1px;display:grid;place-items:center;transition:border-color .15s}
+  .radio .ring{width:18px;height:18px;border-radius:50%;border:2px solid var(--line-strong);flex:none;margin-top:1px;display:grid;place-items:center;transition:border-color var(--dur-micro) var(--ease-out)}
   .radio.on .ring{border-color:var(--accent)}
   .radio.on .ring::after{content:"";width:9px;height:9px;border-radius:50%;background:var(--accent)}
   .radio .rt{font-weight:600;font-size:14px}
@@ -231,7 +275,7 @@
 
   .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:24px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
   .tabs::-webkit-scrollbar{display:none}
-  .tab{background:none;border:none;padding:10px 4px;margin-right:16px;white-space:nowrap;flex:none;font-size:14px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tab{background:none;border:none;padding:10px 4px;margin-right:16px;white-space:nowrap;flex:none;font-size:14px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:color var(--dur-micro) var(--ease-out),border-color var(--dur-micro) var(--ease-out),transform var(--dur-micro) var(--ease-out)}
   .tab.active{color:var(--ink);border-bottom-color:var(--accent)}
   .setnote{color:var(--muted);font-size:13px;margin:-8px 0 18px}
   .field{margin-bottom:18px}
@@ -284,10 +328,13 @@
   .soc .sh .caret{width:18px;height:18px;stroke:var(--faint);transition:transform .2s}
   .soc.open .sh .caret{transform:rotate(180deg)}
   .soc .sbody{display:none;padding:4px 17px 18px;border-top:1px solid var(--line)}
-  .soc.open .sbody{display:block}
+  .soc.open .sbody{display:block;animation:m-panel-in var(--dur-enter) var(--ease-out) both}
+  .soc .sbody[data-state="closing"]{display:block;animation:m-panel-out var(--dur-exit) var(--ease-in) both}
+  .soc .sh .caret{transition:transform var(--dur-enter) var(--ease-out)}
 
-  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--paper);padding:12px 18px;border-radius:11px;font-size:13.5px;font-weight:500;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:all .25s;z-index:50;display:flex;align-items:center;gap:9px}
-  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,10px);background:var(--ink);color:var(--paper);padding:12px 18px;border-radius:11px;font-size:13.5px;font-weight:500;box-shadow:var(--shadow);opacity:0;pointer-events:none;z-index:50;display:flex;align-items:center;gap:9px}
+  .toast[data-state="open"]{animation:m-fade-rise var(--dur-enter) var(--ease-out) both}
+  .toast[data-state="closing"]{animation:m-fade-sink var(--dur-exit) var(--ease-in) both}
   .toast svg{width:16px;height:16px;stroke:var(--accent)}
 
   .backdrop{position:fixed;inset:0;background:rgba(20,18,16,.45);display:none;align-items:center;justify-content:center;padding:20px;z-index:40}
@@ -319,6 +366,7 @@
   @media(max-width:760px){.themerow{padding:0}.themerow .tl{display:none}}
 
   /* admin lock */
+  .lock,.gpage{animation:m-overlay-in var(--dur-enter) var(--ease-out) both}
   .lock{position:fixed;inset:0;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:24px;z-index:100;overflow-y:auto}
   .lockcard{width:100%;max-width:330px;text-align:center}
   .lockcard .mk{width:44px;height:44px;border-radius:12px;background:var(--accent);display:grid;place-items:center;margin:0 auto 16px}
