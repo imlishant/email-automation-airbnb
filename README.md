@@ -12,7 +12,8 @@ arrival.
 ```
 gatepass/
 ├── README.md            You are here. Project overview and how to run.
-├── CLAUDE.md            Orientation for contributors and coding agents.
+├── AGENTS.md            Orientation for contributors and coding agents.
+├── PROJECT_STATE.md     Where work stopped and the next action.
 ├── CHANGELOG.md         What changed, per release.
 ├── shared/
 │   └── rules.js         THE RULES, imported by the frontend AND the server.
@@ -114,7 +115,7 @@ Airbnb → your listing → Availability → Connect calendars → Export calend
 ## Where to start reading
 
 - New here? `docs/CONTEXT.md`, then `docs/DECISIONS.md`.
-- About to write code? `CLAUDE.md`, then `docs/CODING_STANDARDS.md`.
+- About to write code? `AGENTS.md`, then `docs/CODING_STANDARDS.md`.
 - Touching uploads, tokens, email, or retention? `docs/SECURITY.md` first.
 - Planning the next piece of work? `docs/ROADMAP.md` and `docs/PROJECT.md`.
 - Wondering why the stack is what it is? `docs/TECH_STACK.md`.

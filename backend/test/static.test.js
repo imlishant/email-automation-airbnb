@@ -57,7 +57,7 @@ test("old /frontend/index.html links redirect to the root", async () => {
 });
 
 test("backend source, docs and data are not served", async () => {
-  for (const url of ["/backend/package.json", "/backend/src/http/config.js", "/CLAUDE.md",
+  for (const url of ["/backend/package.json", "/backend/src/http/config.js", "/CLAUDE.md", "/AGENTS.md", "/PROJECT_STATE.md",
     "/backend/data/gatepass.db", "/backend/.env", "/docs/SECURITY.md", "/../backend/package.json"]) {
     assert.equal((await get(url)).statusCode, 404, url);
   }

@@ -109,7 +109,7 @@ The documents are load-bearing here; stale ones are worse than none.
 
 - `DECISIONS.md` and `ROADMAP.md` change in the same commit as the code they
   describe.
-- At the end of each phase, re-read `ARCHITECTURE.md` and `CLAUDE.md` and delete
+- At the end of each phase, re-read `ARCHITECTURE.md` and `AGENTS.md` and delete
   anything that has stopped being true — particularly the "not built yet" and
   "prototype limits" passages, which are correct today and will become
   misleading the moment Phase 1 lands.

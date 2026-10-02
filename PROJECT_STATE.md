@@ -1,0 +1,24 @@
+# Project State — GatePass
+
+_Last updated: 2026-10-02 by Claude Code (Opus 5.5), during onboarding — confirm the objective and next action._
+
+## Current objective
+Live on Render (`gatepass.paletteandpillows.space`), phases 1–5 done. Work now comes from the host backlog and production findings in `docs/ROADMAP.md`.
+
+## Completed (recent)
+- 2026-10-02: tick health strip on Bookings (stale tick, failing mailbox, unreadable calendar, unconnected listing); cancellation separated from sync conflict, with a `past` group.
+- 2026-09-29: iOS-style motion system made the standard.
+
+## In progress
+Nothing half-done; the working tree was clean at onboarding.
+
+## Blocked / open questions
+- Which backlog item is next? Open ones in `docs/ROADMAP.md` → *Backlog*: #3 telling bookings of the same flat apart, #4 a first run that explains itself, #5 drop the dead passcode tables (`admin_auth`, `owner_links`).
+- Phase 5 leftover: off-Turso nightly backups.
+
+## Next action
+User picks the next backlog item; agree its scope (each is its own phase), then build it.
+
+## Gotchas
+- Deployment breaks things tests can't see (see ROADMAP *Found by using it in production*). Verify on the deployed site, not only `npm test`.
+- `FILE_ENCRYPTION_KEY.txt` and `db_turso_auth_token.txt` sit in the repo root; they are gitignored — never read, print or commit them.
