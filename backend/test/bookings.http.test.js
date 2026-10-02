@@ -8,6 +8,7 @@ import { loadConfig } from "../src/http/config.js";
 import { buildServer } from "../src/http/server.js";
 import { COOKIE } from "../src/http/session.js";
 import { newId, nowIso, run } from "../src/db/client.js";
+import { randomBytes } from "node:crypto";
 import { Derive, addDays, toDay } from "../../shared/rules.js";
 import { signIn } from "./fixtures/session.js";
 let acc;   // the signed-in account every row below belongs to
@@ -18,7 +19,8 @@ const today = () => toDay(new Date());
 before(async () => {
   dir = await mkdtemp(join(tmpdir(), "gatepass-bk-"));
   app = await buildServer(loadConfig({
-    DATABASE_URL: `file:${join(dir, "t.db")}`,
+    DATABASE_URL: `file:${join(dir, "t.db")}`, JOBS_TICK_SECRET: "tick-secret-for-tests",
+    FILE_ENCRYPTION_KEY: randomBytes(32).toString("base64"), MAIL_FROM: "host@example.com",
     RATE_LIMIT_GLOBAL_PER_MINUTE: "5000", RATE_LIMIT_AUTH_PER_MINUTE: "500",
   }), { logger: false });
   const session = await signIn(app);
@@ -45,10 +47,10 @@ beforeEach(async () => {
 async function booking(over = {}) {
   const id = newId("bkg");
   const b = { code: newId("HM").toUpperCase(), checkIn: addDays(today(), 3), checkOut: addDays(today(), 6),
-              conflict: 0, sentAt: null, automation: "allids", lead: "Lead guest", ...over };
-  await run(client, `INSERT INTO bookings (id,airbnb_code,listing_id,check_in,check_out,children,automation,conflict,sent_at,lead_guest,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [id, b.code, b.listingId || lst, b.checkIn, b.checkOut, 0, b.automation, b.conflict, b.sentAt, b.leadGuest || null, nowIso(), nowIso()]);
+              conflict: 0, sentAt: null, cancelledAt: null, automation: "allids", lead: "Lead guest", ...over };
+  await run(client, `INSERT INTO bookings (id,airbnb_code,listing_id,check_in,check_out,children,automation,conflict,sent_at,cancelled_at,lead_guest,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, b.code, b.listingId || lst, b.checkIn, b.checkOut, 0, b.automation, b.conflict, b.sentAt, b.cancelledAt, b.leadGuest || null, nowIso(), nowIso()]);
   const per = newId("per");
   await run(client, `INSERT INTO people (id,booking_id,name,is_lead,created_at) VALUES (?,?,?,1,?)`,
     [per, id, b.lead, nowIso()]);
@@ -111,10 +113,17 @@ test("attention first, then chronological, with counts for both groups", async (
   await booking({ code: "HMAWAIT02", checkIn: addDays(today(), 9), checkOut: addDays(today(), 10) });
   await booking({ code: "HMCONFL03", checkIn: addDays(today(), 5), checkOut: addDays(today(), 6), conflict: 1 });
 
+  // A check-in that has already passed, still with no IDs: the host's problem,
+  // but not the one to put at the top.
+  await booking({ code: "HMPAST004", checkIn: addDays(today(), -1), checkOut: addDays(today(), 2) });
+  await booking({ code: "HMCANX005", checkIn: addDays(today(), 7), checkOut: addDays(today(), 8),
+                  cancelledAt: nowIso() });
+
   const body = (await get("/api/bookings")).json();
-  assert.deepEqual(body.rows.map((r) => r.code), ["HMCONFL03", "HMAWAIT02", "HMSENT001"],
-    "attention group first, in check-in order, then the settled one");
-  assert.deepEqual(body.counts, { attention: 2, settled: 1 });
+  assert.deepEqual(body.rows.map((r) => r.code),
+    ["HMCONFL03", "HMAWAIT02", "HMPAST004", "HMSENT001", "HMCANX005"],
+    "attention in check-in order, then past, then settled, then cancelled");
+  assert.deepEqual(body.counts, { attention: 2, past: 1, settled: 1, cancelled: 1 });
 });
 
 // --- pagination -----------------------------------------------------------
@@ -221,4 +230,27 @@ test("the list does not issue a query per booking", async () => {
   } finally {
     client.execute = original;
   }
+});
+
+// --- telling the host what has quietly stopped ----------------------------
+
+test("the list carries the health of the things that run on their own", async () => {
+  // Both real failures — a revoked Gmail and a dead scheduler — were invisible
+  // until someone pressed Send. The list now reports them.
+  const body = (await get("/api/bookings")).json();
+  assert.ok(body.health, "health travels with the list, at no extra round trip");
+  assert.equal(body.health.mailFrom, null, "no Gmail connected in this fixture");
+  assert.equal(body.health.lastTickAt, null, "and the tick has never run");
+  assert.equal(body.health.connectedListings, 1);
+});
+
+test("a tick leaves a footprint, so silence can be detected", async () => {
+  const before = (await get("/api/bookings")).json().health.lastTickAt;
+  assert.equal(before, null);
+  const ran = await app.inject({ method: "POST", url: "/api/jobs/tick",
+    headers: { "x-jobs-secret": "tick-secret-for-tests" } });
+  assert.equal(ran.statusCode, 200, ran.body);
+  const after = (await get("/api/bookings")).json().health.lastTickAt;
+  assert.ok(after, "the tick recorded when it ran");
+  assert.ok(Date.now() - Date.parse(after) < 60_000);
 });

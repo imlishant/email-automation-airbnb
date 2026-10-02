@@ -11,10 +11,10 @@
 // they cannot disagree about whether a booking is ready.
 // ---------------------------------------------------------------------------
 import { CONFIG } from "./config.js";
-import { Derive, RULES, parseDay, fillTemplate, TEMPLATE_VARS, DEFAULT_SUBJECT } from "../../shared/rules.js";
+import { Derive, RULES, parseDay, fillTemplate, TEMPLATE_VARS, DEFAULT_SUBJECT, groupOf } from "../../shared/rules.js";
 
 // Re-exported so screens import their rules from one place.
-export { Derive, RULES, parseDay, fillTemplate, TEMPLATE_VARS, DEFAULT_SUBJECT };
+export { Derive, RULES, parseDay, fillTemplate, TEMPLATE_VARS, DEFAULT_SUBJECT, groupOf };
 
 const API = "/api";
 

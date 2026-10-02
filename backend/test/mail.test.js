@@ -268,3 +268,30 @@ test("an emptied subject falls back rather than sending a blank one", async () =
   const updated = await updateSociety(client, accountId, soc, { subject: "   " });
   assert.equal(updated.subject, DEFAULT_SUBJECT);
 });
+
+test("a failed send marks the mailbox, so the next page load says so", async () => {
+  // The failure this closes: a revoked Gmail discovered only by whoever next
+  // pressed Send, with a guest already on their way to a gate.
+  const { setAccountMail, readAccountMail } = await import("../src/mail/account.js");
+  const accountId = (await one(client, "SELECT account_id FROM societies WHERE id = ?", [soc])).account_id;
+  await setAccountMail(client, accountId,
+    { fromEmail: "host@gmail.com", smtpUser: "host@gmail.com", smtpPass: "abcd efgh ijkl mnop" }, app.fileKey);
+
+  await storeDocument(lead);
+  const good = app.mail;
+  app.mail = { name: "broken", configured: true, async send() {
+    const e = new Error("Google access was revoked or expired — reconnect the Gmail in Settings");
+    e.code = "mail_reconnect";
+    throw e;
+  } };
+  app.mailFor = async () => ({ transport: app.mail, from: "host@gmail.com" });
+  try {
+    const res = await send();
+    assert.equal(res.json().error, "mail_reconnect", res.body);
+    const mail = await readAccountMail(client, accountId);
+    assert.match(mail.lastError, /revoked/i, "recorded against the mailbox itself");
+    assert.equal(mail.verifiedAt, null);
+  } finally {
+    app.mail = good;
+  }
+});

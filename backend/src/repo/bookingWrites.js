@@ -14,6 +14,7 @@ import { getBooking, appSettings } from "./bookings.js";
 import { Derive, fillTemplate, DEFAULT_SUBJECT } from "../../../shared/rules.js";
 import { buildAttachments, AttachmentsUnavailable } from "../mail/attachments.js";
 import { bookingChanged } from "../events.js";
+import { recordMailCheck } from "../mail/account.js";
 
 const MAX_ADULTS = 30;
 
@@ -40,6 +41,7 @@ async function loadForRules(client, id) {
     checkIn: row.check_in, checkOut: row.check_out, children: Number(row.children || 0),
     leadGuest: row.lead_guest || null, automation: row.automation,
     sentAt: row.sent_at || null, conflict: Boolean(row.conflict),
+    cancelledAt: row.cancelled_at || null,
     sentTo: row.sent_to || null, sentCc: row.sent_cc || null,
     people: people.map((p) => ({ id: p.id, name: p.name, lead: Boolean(p.is_lead), documentType: p.doc_type || null, fileRef: p.file_ref, contentType: p.content_type })),
   };
@@ -295,9 +297,14 @@ export async function sendBooking(client, id, transport, { actor = "admin", auto
   try {
     delivery = await transport.send(message);
   } catch (e) {
-    // A failed send leaves the booking exactly as it was, and says why.
+    // A failed send leaves the booking exactly as it was, says why, and
+    // RECORDS it against the account's mailbox: a revoked Gmail used to be
+    // discovered only by whoever next pressed Send.
+    await recordMailCheck(client, booking.accountId, { ok: false, error: e.message }).catch(() => {});
     return { ok: false, reason: e.code || "send_failed", message: e.message };
   }
+  // It worked, so the mailbox is known good as of now.
+  await recordMailCheck(client, booking.accountId, { ok: true }).catch(() => {});
 
   const at = nowIso();
   await transaction(client, async (tx) => {

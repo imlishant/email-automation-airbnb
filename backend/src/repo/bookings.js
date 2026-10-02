@@ -10,7 +10,7 @@
 //      anyway (docs/TECH_STACK.md §5) so cost stays flat if that ever changes.
 // ---------------------------------------------------------------------------
 import { query, one } from "../db/client.js";
-import { Derive, addDays, DEFAULT_SUBJECT } from "../../../shared/rules.js";
+import { Derive, addDays, DEFAULT_SUBJECT, groupOf, GROUPS } from "../../../shared/rules.js";
 
 /** The shape shared/rules.js expects. Nothing derived is included. */
 function shapeBooking(row, people = []) {
@@ -31,6 +31,7 @@ function shapeBooking(row, people = []) {
     sentAt: row.sent_at || null,
     conflict: Boolean(row.conflict),
     conflictReason: row.conflict_reason || null,
+    cancelledAt: row.cancelled_at || null,
     lastDocumentAt: row.last_document_at || null,
     // Pinned at send time: a resend goes where the first send went
     // (migration 003).
@@ -103,7 +104,7 @@ export async function listBookings(client, { accountId, listingId = null, cursor
   if (listingId) { where += " AND b.listing_id = ?"; args.push(listingId); }
 
   const narrow = (await query(client, `
-    SELECT b.id, b.check_in, b.check_out, b.conflict, b.sent_at, b.updated_at,
+    SELECT b.id, b.check_in, b.check_out, b.conflict, b.sent_at, b.cancelled_at, b.updated_at,
            (SELECT COUNT(*) FROM people p WHERE p.booking_id = b.id) AS adults,
            (SELECT COUNT(*) FROM people p JOIN documents d ON d.person_id = p.id WHERE p.booking_id = b.id) AS docs,
            (SELECT MAX(d.uploaded_at) FROM people p JOIN documents d ON d.person_id = p.id WHERE p.booking_id = b.id) AS last_doc
@@ -111,7 +112,7 @@ export async function listBookings(client, { accountId, listingId = null, cursor
     WHERE ${where} ORDER BY b.check_in, b.id`, args))
     .map((r) => ({
       id: r.id, checkIn: r.check_in, checkOut: r.check_out,
-      conflict: Boolean(r.conflict), sentAt: r.sent_at || null,
+      conflict: Boolean(r.conflict), sentAt: r.sent_at || null, cancelledAt: r.cancelled_at || null,
       updatedAt: r.updated_at, lastDoc: r.last_doc || "",
       // A stand-in with exactly what Derive reads from people — how many there
       // are and how many have an ID — without loading a single name.
@@ -119,8 +120,11 @@ export async function listBookings(client, { accountId, listingId = null, cursor
     }))
     .filter((b) => Derive.visible(b, settings, now));
 
-  // Attention first, then chronological (docs/DECISIONS.md, "Sorting").
-  const ordered = [...narrow.filter((b) => Derive.needsAttention(b)), ...narrow.filter((b) => !Derive.needsAttention(b))];
+  // Attention first, then past, then settled, then cancelled — and
+  // chronological within each (docs/DECISIONS.md, "Sorting"). A booking whose
+  // check-in has gone must not sit above tomorrow's arrival.
+  const bucket = (b) => groupOf(b, settings, now);
+  const ordered = GROUPS.flatMap((g) => narrow.filter((b) => bucket(b) === g));
   const start = cursor ? ordered.findIndex((b) => b.id === decodeCursor(cursor)?.id) + 1 : 0;
   const pageIds = ordered.slice(start, start + limit).map((b) => b.id);
 
@@ -145,10 +149,7 @@ export async function listBookings(client, { accountId, listingId = null, cursor
   return {
     rows,
     nextCursor: start + limit < ordered.length && rows.length ? encodeCursor(rows[rows.length - 1]) : null,
-    counts: {
-      attention: narrow.filter((b) => Derive.needsAttention(b)).length,
-      settled: narrow.filter((b) => !Derive.needsAttention(b)).length,
-    },
+    counts: Object.fromEntries(GROUPS.map((g) => [g, narrow.filter((b) => bucket(b) === g).length])),
     // The ETag input: every change bumps updated_at or adds a document, and the
     // count catches a booking dropping off the list.
     version: `${narrow.length}-${narrow.reduce((m, b) => (b.updatedAt > m ? b.updatedAt : m), "")}-${narrow.reduce((m, b) => (b.lastDoc > m ? b.lastDoc : m), "")}`,
@@ -208,6 +209,39 @@ export async function getBooking(client, id, { accountId = null } = {}) {
   // Handed to ensureGuestLink so it does not look these up again.
   booking._liveLink = linkRes.rows[0] || null;
   return booking;
+}
+
+/**
+ * The times, plus everything needed to tell the host that something has
+ * quietly stopped working. Deliberately ONE statement with subqueries rather
+ * than four: the booking list is the hot read, and its round-trip budget is
+ * three (docs/TECH_STACK.md).
+ */
+export async function accountHealth(client, accountId) {
+  const row = await one(client, `
+    SELECT ast.check_in_time, ast.check_out_time,
+           (SELECT MAX(l.last_synced_at) FROM listings l WHERE l.account_id = ast.account_id) AS last_sync_at,
+           (SELECT l.last_sync_error FROM listings l
+              WHERE l.account_id = ast.account_id AND l.last_sync_error IS NOT NULL LIMIT 1) AS sync_error,
+           (SELECT COUNT(*) FROM listings l WHERE l.account_id = ast.account_id AND l.ical_url <> '') AS connected,
+           am.from_email AS mail_from, am.verified_at AS mail_ok_at, am.last_error AS mail_error,
+           (SELECT jobs_last_tick_at FROM app_settings WHERE id = 1) AS last_tick_at
+      FROM account_settings ast
+      LEFT JOIN account_mail am ON am.account_id = ast.account_id
+     WHERE ast.account_id = ?`, [accountId]);
+  if (!row) return null;
+  return {
+    times: { checkInTime: row.check_in_time, checkOutTime: row.check_out_time },
+    health: {
+      lastSyncAt: row.last_sync_at || null,
+      syncError: row.sync_error || null,
+      connectedListings: Number(row.connected || 0),
+      mailFrom: row.mail_from || null,
+      mailOkAt: row.mail_ok_at || null,
+      mailError: row.mail_error || null,
+      lastTickAt: row.last_tick_at || null,
+    },
+  };
 }
 
 /**

@@ -45,6 +45,7 @@ export const CONFIG = Object.freeze({
   // come from shared/rules.js; this is only the label the host reads. The CSS
   // class is the status key itself.
   statusLabel: Object.freeze({
+    cancelled: "Cancelled on Airbnb",
     conflict: "Sync conflict",
     awaiting: "Awaiting IDs",
     ready: "Ready to send",

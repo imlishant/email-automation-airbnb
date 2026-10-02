@@ -59,6 +59,20 @@ Security entries are always listed, even when the fix is small.
 
 ### Fixed
 
+- **A cancelled booking showed as "Sync conflict"** and could not be cleared.
+  Cancellation is now its own state (migration `010_cancelled.sql`, which also
+  repairs existing rows): quiet, in its own group, never sent, and lifted
+  automatically if the booking reappears in the feed.
+- **A past check-in sat above tomorrow's arrival.** The list now has four
+  groups — needs attention, past check-ins, ready & sent, cancelled — from one
+  definition in `shared/rules.js`.
+- **Live updates yanked the page to the top.** A re-render of the same screen
+  now keeps your scroll position; only moving to a different screen scrolls.
+- **A revoked Gmail was only discovered by pressing Send.** The Bookings page
+  now shows a health strip (migration `011_tick_health.sql`): a failing
+  mailbox with its real error, an automatic tick that has stopped running, an
+  unreadable calendar, or no connected listing.
+
 - `frontend/test.html` never loaded the app's stylesheet, so any check that
   read a computed style was quietly measuring nothing. It does now.
 

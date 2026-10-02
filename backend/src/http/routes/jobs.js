@@ -13,6 +13,7 @@ import { requireAdmin } from "./auth.js";
 import { syncAllListings, syncListing } from "../../jobs/sync.js";
 import { runDueSends } from "../../jobs/send.js";
 import { purgeExpired } from "../../jobs/purge.js";
+import { run, nowIso } from "../../db/client.js";
 import { getListing } from "../../repo/listings.js";
 
 const syncOut = {
@@ -65,6 +66,9 @@ export async function registerJobs(app) {
       // Last, so a booking is never purged in the same tick it could still have
       // been sent in.
       const purged = await purgeExpired(client, { store: app.files, log: (m) => req.log.info(m) });
+      // A footprint, so the UI can say when this last ran. Silence is the
+      // failure mode that hid a dead scheduler for days.
+      await run(client, "UPDATE app_settings SET jobs_last_tick_at = ? WHERE id = 1", [nowIso()]);
       return { ok: true, ran: synced.length, sent: sends.filter((s) => s.sent).length,
                purged: purged.filter((p) => p.purged).length, skipped: false };
     } finally {

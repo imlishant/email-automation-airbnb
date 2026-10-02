@@ -2,7 +2,7 @@
 // so a rule proved here is the rule the UI shows.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Derive, RULES, STATUS, fillTemplate, TEMPLATE_VARS, daysBetween, parseDay, toDay, addDays, atTime } from "../../shared/rules.js";
+import { Derive, RULES, STATUS, groupOf, GROUPS, fillTemplate, TEMPLATE_VARS, daysBetween, parseDay, toDay, addDays, atTime } from "../../shared/rules.js";
 
 const times = { checkInTime: "14:00", checkOutTime: "11:00" };
 const booking = (over = {}) => ({
@@ -43,7 +43,31 @@ test("status precedence: conflict beats sent beats ready", () => {
   assert.equal(Derive.status(booking({ people: all, sentAt: "2026-09-19T10:00:00Z", conflict: true })), "conflict");
   assert.equal(Derive.needsAttention(booking()), true);
   assert.equal(Derive.needsAttention(booking({ people: all })), false);
-  assert.deepEqual(Object.keys(STATUS).sort(), ["awaiting", "conflict", "ready", "sent"]);
+  // Cancelled outranks all of them: nobody is arriving.
+  assert.equal(Derive.status(booking({ people: all, sentAt: "2026-09-19T10:00:00Z", conflict: true,
+    cancelledAt: "2026-09-20T10:00:00Z" })), "cancelled");
+  assert.equal(Derive.needsAttention(booking({ cancelledAt: "2026-09-20T10:00:00Z" })), false,
+    "a cancellation needs no decision, so it does not nag");
+  assert.deepEqual(Object.keys(STATUS).sort(), ["awaiting", "cancelled", "conflict", "ready", "sent"]);
+});
+
+test("the list is grouped so a past check-in cannot sit above tomorrow's arrival", () => {
+  const times = { checkInTime: "14:00", checkOutTime: "11:00" };
+  const now = Date.parse("2026-09-21T12:00:00.000Z");
+  const all = [{ lead: true, documentType: "Aadhaar" }, { lead: false, documentType: "Passport" }];
+  const at = (ci, co, over = {}) => booking({ checkIn: ci, checkOut: co, ...over });
+
+  // Awaiting, and still to come.
+  assert.equal(groupOf(at("2026-09-23", "2026-09-25"), times, now), "attention");
+  // Awaiting, but check-in has already gone by: still the host's problem, a
+  // different problem, and it belongs below the one arriving tomorrow.
+  assert.equal(groupOf(at("2026-09-19", "2026-09-24"), times, now), "past");
+  // Sent, or complete and waiting: settled either way.
+  assert.equal(groupOf(at("2026-09-23", "2026-09-25", { people: all, sentAt: "2026-09-20T10:00:00Z" }), times, now), "settled");
+  assert.equal(groupOf(at("2026-09-23", "2026-09-25", { people: all }), times, now), "settled");
+  // Cancelled is its own quiet corner, wherever its dates fall.
+  assert.equal(groupOf(at("2026-09-23", "2026-09-25", { cancelledAt: "2026-09-20T09:00:00Z" }), times, now), "cancelled");
+  assert.deepEqual(GROUPS, ["attention", "past", "settled", "cancelled"]);
 });
 
 test("one retention moment: hide, link death and file delete coincide", () => {

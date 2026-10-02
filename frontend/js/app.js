@@ -6,7 +6,7 @@
 
 import { CONFIG } from "./config.js";
 import { prepareForUpload, FileRejected } from "./upload.js";
-import { Data, Derive, parseDay, fillTemplate, RULES, TEMPLATE_VARS, DEFAULT_SUBJECT, setUnauthorisedHandler } from "./data.js";
+import { Data, Derive, parseDay, fillTemplate, RULES, TEMPLATE_VARS, DEFAULT_SUBJECT, groupOf, setUnauthorisedHandler } from "./data.js";
 import { enter, leave, leaveAndRemove, markNew, animateScreen, glideTo } from "./motion.js";
 
 // ---------- formatting ----------
@@ -227,7 +227,10 @@ async function render() {
   if (seq !== renderSeq) return;
   animateScreen(main, screenKey, screenChanged);
   markNew(main, screenKey);
-  glideTo(0);
+  // Only a genuinely different screen scrolls to the top. A re-render of the
+  // same screen — a guest uploading, a tick arriving — leaves the reader where
+  // they were; yanking them up mid-read was the worst thing the live updates did.
+  if (screenChanged) glideTo(0);
 }
 const fresh = (seq) => seq === renderSeq;
 
@@ -238,13 +241,17 @@ async function renderList(seq) {
     Data.listings(),
   ]);
   if (!fresh(seq)) return;
-  const attention = page.rows.filter(Derive.needsAttention);
-  const settled = page.rows.filter((b) => !Derive.needsAttention(b));
+  // The same grouping the server ordered and counted by, from shared/rules.js.
+  const times = page.times;
+  const inGroup = (g) => page.rows.filter((b) => groupOf(b, times) === g);
+  const groups = { attention: inGroup("attention"), past: inGroup("past"),
+                   settled: inGroup("settled"), cancelled: inGroup("cancelled") };
   const retain = RULES.hideBookingAfterCheckoutHours;
 
   main.innerHTML = `
     <div class="page-head">
-      <div><h1>Bookings</h1><div class="sub">${page.counts.attention} need your attention · ${page.counts.settled} ready or sent</div></div>
+      <div><h1>Bookings</h1><div class="sub">${page.counts.attention} need your attention · ${page.counts.settled} ready or sent${
+        page.counts.past ? ` · ${page.counts.past} past` : ""}</div></div>
       <select class="filter" id="flt" aria-label="Filter by listing">
         <option value="">All listings</option>
         ${listings.map((l) => `<option value="${esc(l.id)}" ${view.listingId === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("")}
@@ -255,11 +262,16 @@ async function renderList(seq) {
       <span class="sep">·</span><span>New bookings and IDs appear on their own; past bookings drop off ${retain}h after checkout</span>
       <span class="sep">·</span><button id="syncnow">Sync now</button>
     </div>
+    ${healthHTML(page.health)}
     <div class="group-label">Needs your attention</div>
-    <div id="attn">${attention.length ? attention.map(cardHTML).join("")
+    <div id="attn">${groups.attention.length ? groups.attention.map(cardHTML).join("")
       : `<div class="card"><div class="empty">Nothing waiting. Every upcoming booking has its IDs in.</div></div>`}</div>
-    <div class="group-label" ${settled.length ? "" : 'hidden'}>Ready &amp; sent</div>
-    <div id="settled">${settled.map(cardHTML).join("")}</div>
+    <div class="group-label" ${groups.past.length ? "" : "hidden"}>Past check-ins &mdash; never sent</div>
+    <div id="past">${groups.past.map(cardHTML).join("")}</div>
+    <div class="group-label" ${groups.settled.length ? "" : "hidden"}>Ready &amp; sent</div>
+    <div id="settled">${groups.settled.map(cardHTML).join("")}</div>
+    <div class="group-label" ${groups.cancelled.length ? "" : "hidden"}>Cancelled on Airbnb</div>
+    <div id="cancelled">${groups.cancelled.map(cardHTML).join("")}</div>
     <div id="more">${page.nextCursor ? `<button class="btn" id="showmore" data-cursor="${esc(page.nextCursor)}">Show more bookings</button>` : ""}</div>`;
 
   document.getElementById("flt").onchange = (e) => { view.listingId = e.target.value || null; render(); };
@@ -280,6 +292,47 @@ async function renderList(seq) {
   bindShowMore();
 }
 
+/**
+ * What is quietly broken, said out loud.
+ *
+ * Both of the failures that actually happened were invisible until a send was
+ * attempted: a revoked Gmail, and a scheduler that had stopped running. Each
+ * one now has a line here, with what to do about it.
+ */
+function healthHTML(h) {
+  if (!h) return "";
+  const notes = [];
+  const ago = (iso) => (iso ? fmt.ago(iso) : null);
+
+  if (!h.mailFrom) {
+    notes.push({ tone: "warn", text: "No sending Gmail is connected, so nothing can be sent.",
+                 action: "#settings/email", label: "Connect one" });
+  } else if (h.mailError) {
+    notes.push({ tone: "bad", text: `Sending from ${esc(h.mailFrom)} is failing: ${esc(h.mailError)}`,
+                 action: "#settings/email", label: "Reconnect" });
+  }
+
+  // The tick is what makes anything automatic happen. If it has not run,
+  // nothing has synced and nothing has been sent, however healthy this looks.
+  const tickAge = h.lastTickAt ? Date.now() - Date.parse(h.lastTickAt) : null;
+  if (tickAge === null) {
+    notes.push({ tone: "warn", text: "Automatic syncing and sending have never run on this server." });
+  } else if (tickAge > RULES.tickStaleMinutes * 60_000) {
+    notes.push({ tone: "bad", text: `Automatic syncing and sending last ran ${ago(h.lastTickAt)}. Nothing is happening on its own.` });
+  }
+
+  if (h.syncError) notes.push({ tone: "warn", text: `A calendar could not be read: ${esc(h.syncError)}` });
+  if (!h.connectedListings) {
+    notes.push({ tone: "warn", text: "No listing is connected to an Airbnb calendar yet.",
+                 action: "#settings/listings", label: "Connect a listing" });
+  }
+
+  if (!notes.length) return "";
+  return `<div class="health">${notes.map((n) => `<div class="hnote ${n.tone}" data-anim="h:${esc(n.text.slice(0, 24))}">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+    <span>${n.text}</span>${n.action ? `<a class="btn sm" href="${n.action}">${esc(n.label)}</a>` : ""}</div>`).join("")}</div>`;
+}
+
 // Appends the next page instead of re-rendering the list, so a long list stays
 // cheap however many pages the host walks through.
 function bindShowMore() {
@@ -288,10 +341,9 @@ function bindShowMore() {
   btn.onclick = async () => {
     btn.disabled = true;
     const page = await Data.bookings({ listingId: view.listingId, cursor: btn.dataset.cursor });
-    const attn = document.getElementById("attn"), settledBox = document.getElementById("settled");
     page.rows.forEach((b) => {
-      const box = Derive.needsAttention(b) ? attn : settledBox;
-      box.insertAdjacentHTML("beforeend", cardHTML(b));
+      const box = document.getElementById(groupOf(b, page.times) === "attention" ? "attn" : groupOf(b, page.times));
+      (box || document.getElementById("settled")).insertAdjacentHTML("beforeend", cardHTML(b));
     });
     document.getElementById("more").innerHTML = page.nextCursor
       ? `<button class="btn" id="showmore" data-cursor="${esc(page.nextCursor)}">Show more bookings</button>` : "";
@@ -305,7 +357,9 @@ function bindCards(root) {
 }
 function cardHTML(b) {
   const c = fmt.cal(b.checkIn), s = Derive.status(b);
-  const right = s === "conflict" ? pill(s)
+  // Neither a conflict nor a cancellation has a meaningful ID count: one is
+  // unresolved, the other is not happening.
+  const right = s === "conflict" || s === "cancelled" ? pill(s)
     : `${pill(s)}<span class="idcount"><b>${Derive.uploaded(b)}</b> of ${Derive.adults(b)} adult IDs</span>`;
   return `<button class="bk" data-open="${esc(b.id)}">
     <div class="cal"><span class="mo">${esc(c.mo)}</span><span class="dy">${esc(c.dy)}</span></div>
@@ -1125,7 +1179,8 @@ async function showGuest(token) {
       <div class="ct"><button data-adj="-1" aria-label="One fewer adult">−</button><span class="n">${Derive.adults(b)}</span><button data-adj="1" aria-label="One more adult">+</button></div></div>
     <div class="ghelp">One ID per adult, including friends joining you. Add each person's name — the gate desk
       matches the name to the ID. You can replace a blurry photo any time before checkout.
-      <span class="gquiet">Photos are resized and stripped of location data on your phone before they are sent.</span></div>
+      <span class="gquiet">Photos are resized and stripped of location data on your phone before they are sent.</span>
+    </div>
     ${b.people.map((p) => `<div class="grow" data-anim="p:${esc(p.id)}"><div class="ghead"><div class="av">${esc(initials(p.name))}</div>
       <div class="gi"><div class="gn">${nameField(p, true)}</div>
         <div class="gs ${p.documentType ? "done" : ""}">${p.lead ? '<span class="you">You</span> \u00b7 ' : ""}${p.documentType ? `${esc(p.documentType)} uploaded` : "choose the ID type, then add a photo"}</div></div></div>

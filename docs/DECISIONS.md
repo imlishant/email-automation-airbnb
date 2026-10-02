@@ -521,3 +521,69 @@ Two rules kept:
   default stays ASCII; a host who types an em-dash gets one, knowingly.
 - **Never blank.** An emptied subject falls back to the default. A subjectless
   email at a security desk reads as spam.
+
+## A cancellation is not a conflict (2026-10-02)
+
+When a booking disappeared from the Airbnb feed, sync flagged it `conflict = 1`
+with the reason "No longer in the Airbnb calendar". That was wrong in three
+ways, and the host hit all three at once: a guest cancelled, and GatePass
+showed a red **Sync conflict** at the top of the list while they went looking
+for a double booking that did not exist.
+
+- **It conflated two different events.** A conflict means two reservations want
+  the same nights and a human must choose. A cancellation needs nobody.
+- **It could not be cleared.** Nothing lifted the flag, so it sat at the top
+  until the booking purged 24h after checkout — possibly months away.
+- **The reason was buried.** The list showed the generic conflict pill; the
+  explanation only appeared on the detail page.
+
+Now: `bookings.cancelled_at` (migration 010). Sync sets it when a booking
+vanishes, clears it if the booking reappears, and never touches `conflict`.
+`Derive.status` returns `cancelled` ahead of everything else, because whatever
+else is true, nobody is arriving. A cancelled booking **cannot be sent**
+(manually or automatically) and **accepts no new IDs** — a gate desk must never
+be told to expect a guest who cancelled.
+
+Migration 010 repairs existing data: anything flagged conflict for having
+vanished becomes cancelled.
+
+**On a rebooking of the same dates:** conflicts are computed only between
+reservations *present in the feed*, so a new reservation for nights a cancelled
+booking used to hold is simply a new booking. No conflict, because there is no
+contradiction — the old one is gone from Airbnb.
+
+## The list has four groups, not two (2026-10-02)
+
+"Attention / settled" put a check-in from last week above an arrival tomorrow,
+because both were merely "awaiting IDs". The host's complaint was precise: a
+stay whose check-in has passed is a different problem and belongs elsewhere.
+
+`groupOf()` in `shared/rules.js` — one definition, used by the server to order
+and count and by the browser to draw headings:
+
+| group | what it holds |
+| --- | --- |
+| `attention` | upcoming, and something is missing |
+| `past` | check-in has already passed and it never went out |
+| `settled` | ready, or sent |
+| `cancelled` | gone from the feed |
+
+## Silence is a failure, so it is on screen (2026-10-02)
+
+Two production failures were invisible until a send was attempted: the Gmail
+connection had been revoked, and before that the scheduler ping was returning
+415 so nothing automatic ran for days. In both cases the app looked perfectly
+healthy.
+
+The Bookings page now carries a health strip, fed by the same request as the
+list (one query with subqueries — the round-trip budget is three):
+
+- no sending Gmail connected, or the mailbox is failing, with its real error;
+- the automatic tick has never run, or last ran more than
+  `RULES.tickStaleMinutes` ago (25 — two missed pings);
+- a calendar that could not be read;
+- no listing connected at all.
+
+A real send now records its outcome against `account_mail` too, so a revoked
+token is visible on the *next page load* rather than to whoever next presses
+Send.

@@ -51,7 +51,8 @@ export async function syncListing(client, listing, { now = Date.now(), read = co
   }
 
   const existing = await query(client,
-    "SELECT id, airbnb_code, ical_uid, check_in, check_out, conflict, conflict_reason, sent_at FROM bookings WHERE listing_id = ?",
+    `SELECT id, airbnb_code, ical_uid, check_in, check_out, conflict, conflict_reason, sent_at, cancelled_at
+       FROM bookings WHERE listing_id = ?`,
     [listing.id]);
 
   // Overlapping reservations in the feed itself are a conflict on both.
@@ -98,11 +99,15 @@ export async function syncListing(client, listing, { now = Date.now(), read = co
 
     const datesChanged = match.check_in !== event.checkIn || match.check_out !== event.checkOut;
     const conflictChanged = Boolean(match.conflict) !== isConflicted;
-    if (!datesChanged && !conflictChanged) continue;
+    // It was marked cancelled and is back in the feed: a feed that dropped it
+    // for a tick, or a guest who rebooked. Either way it is live again.
+    const uncancelled = Boolean(match.cancelled_at);
+    if (!datesChanged && !conflictChanged && !uncancelled) continue;
 
     await transaction(client, async (tx) => {
       await tx.execute({
         sql: `UPDATE bookings SET check_in = ?, check_out = ?, conflict = ?, conflict_reason = ?,
+                cancelled_at = NULL,
                 airbnb_code = COALESCE(airbnb_code, ?), ical_uid = COALESCE(ical_uid, ?), updated_at = ?
               WHERE id = ?`,
         args: [event.checkIn, event.checkOut, isConflicted ? 1 : 0,
@@ -118,25 +123,33 @@ export async function syncListing(client, listing, { now = Date.now(), read = co
         await logActivity(tx, match.id, "conflict",
           isConflicted ? "Sync conflict: dates overlap another reservation" : "Sync conflict resolved");
       }
+      if (uncancelled) {
+        await logActivity(tx, match.id, "sync", "Back in the Airbnb calendar — no longer cancelled");
+      }
     });
     updated++;
     if (isConflicted) conflicts++;
   }
 
-  // A booking that has vanished from the feed was probably cancelled — but the
-  // feed also only covers a window, and a parse quirk could drop one. So it is
-  // FLAGGED, never deleted: the host decides.
+  // A booking that has vanished from the feed was almost certainly cancelled —
+  // but the feed also only covers a window, and a parse quirk could drop one.
+  // So it is MARKED, never deleted: the record survives, nothing is sent for
+  // it, and if it comes back the mark is lifted (above).
+  //
+  // It is deliberately NOT a conflict. A conflict means two reservations want
+  // the same nights and a human must choose; a cancellation needs nobody.
   const today = new Date(now).toISOString().slice(0, 10);
   let vanished = 0;
   for (const b of existing) {
     if (seen.has(b.id) || b.check_out < today) continue;
-    if (b.conflict) continue;
+    if (b.cancelled_at) continue;
     await transaction(client, async (tx) => {
       await tx.execute({
-        sql: "UPDATE bookings SET conflict = 1, conflict_reason = ?, updated_at = ? WHERE id = ?",
-        args: ["No longer in the Airbnb calendar — cancelled, or the calendar link changed", nowIso(), b.id],
+        sql: `UPDATE bookings SET cancelled_at = ?, conflict = 0, conflict_reason = NULL, updated_at = ?
+              WHERE id = ?`,
+        args: [nowIso(), nowIso(), b.id],
       });
-      await logActivity(tx, b.id, "conflict", "This booking is no longer in the Airbnb calendar");
+      await logActivity(tx, b.id, "cancelled", "No longer in the Airbnb calendar — cancelled, or the calendar link changed");
     });
     vanished++;
   }

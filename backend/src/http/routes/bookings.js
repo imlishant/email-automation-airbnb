@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 import { createHash } from "node:crypto";
 import { requireAdmin } from "./auth.js";
-import { listBookings, getBooking, appSettings } from "../../repo/bookings.js";
+import { listBookings, getBooking, appSettings, accountHealth } from "../../repo/bookings.js";
 import { ensureGuestLink, regenerateGuestLink } from "../../repo/guestLinks.js";
 
 const personOut = {
@@ -33,6 +33,7 @@ const bookingOut = {
     automation: { type: "string" },
     sentAt: { type: ["string", "null"] },
     conflict: { type: "boolean" }, conflictReason: { type: ["string", "null"] },
+    cancelledAt: { type: ["string", "null"] },
     lastDocumentAt: { type: ["string", "null"] },
     sentTo: { type: ["string", "null"] }, sentCc: { type: ["string", "null"] },
     sentSocietyName: { type: ["string", "null"] },
@@ -63,14 +64,24 @@ export async function registerBookings(app) {
           properties: {
             rows: { type: "array", items: bookingOut },
             nextCursor: { type: ["string", "null"] },
-            counts: { type: "object", properties: { attention: { type: "integer" }, settled: { type: "integer" } } },
+            counts: { type: "object", properties: {
+              attention: { type: "integer" }, past: { type: "integer" },
+              settled: { type: "integer" }, cancelled: { type: "integer" } } },
             times: { type: "object", properties: { checkInTime: { type: "string" }, checkOutTime: { type: "string" } } },
+            // So the page can say "nothing has run since Tuesday" instead of
+            // looking healthy while the scheduler is dead.
+            health: { type: ["object", "null"], properties: {
+              lastSyncAt: { type: ["string", "null"] }, syncError: { type: ["string", "null"] },
+              connectedListings: { type: "integer" },
+              mailFrom: { type: ["string", "null"] }, mailOkAt: { type: ["string", "null"] },
+              mailError: { type: ["string", "null"] }, lastTickAt: { type: ["string", "null"] } } },
           },
         },
       },
     },
   }, async (req, reply) => {
-    const settings = await appSettings(client, req.accountId);
+    const read = await accountHealth(client, req.accountId);
+    const settings = read?.times || await appSettings(client, req.accountId);
     const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 100);
     const page = await listBookings(client, {
       accountId: req.accountId,
@@ -85,7 +96,8 @@ export async function registerBookings(app) {
     reply.header("ETag", etag);
     if (req.headers["if-none-match"] === etag) return reply.code(304).send();
 
-    return { rows: page.rows, nextCursor: page.nextCursor, counts: page.counts, times: settings };
+    return { rows: page.rows, nextCursor: page.nextCursor, counts: page.counts, times: settings,
+             health: read?.health || null };
   });
 
   app.get("/bookings/:id", {

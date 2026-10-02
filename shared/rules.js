@@ -17,6 +17,10 @@ export const RULES = Object.freeze({
   // after checkout" and "checkout + 24h" are the same instant, so the booking
   // leaving the list, the guest link dying and the ID files being deleted all
   // land together. docs/DECISIONS.md, "Retention".
+  // How long the automatic tick may be silent before the host is told. The
+  // pinger runs every ten minutes, so twenty-five is two missed runs: late
+  // enough not to cry wolf, early enough to matter before an arrival.
+  tickStaleMinutes: 25,
   hideBookingAfterCheckoutHours: 24,
   guestLinkAfterCheckoutHours: 24,
   deleteIdFilesAfterCheckoutHours: 24,
@@ -37,11 +41,35 @@ export const RULES = Object.freeze({
 });
 
 export const STATUS = Object.freeze({
+  // Gone from the Airbnb feed. Routine — guests cancel — so it is NOT
+  // attention: it needs no decision, and nothing may be sent for it.
+  cancelled: Object.freeze({ label: "Cancelled on Airbnb", attention: false }),
+  // Two reservations in the feed cover the same nights. This one is dangerous
+  // and does need a human.
   conflict: Object.freeze({ label: "Sync conflict", attention: true }),
   awaiting: Object.freeze({ label: "Awaiting IDs", attention: true }),
   ready: Object.freeze({ label: "Ready to send", attention: false }),
   sent: Object.freeze({ label: "Sent", attention: false }),
 });
+
+/**
+ * Which section of the list a booking belongs in. One definition, because the
+ * server orders and counts by it and the browser draws headings from it.
+ *
+ *   attention  upcoming, and something is missing
+ *   past       check-in has already passed and it never went out. Still the
+ *              host's problem, but a different problem — it must not sit above
+ *              tomorrow's arrival.
+ *   settled    ready, or sent
+ *   cancelled  gone from the feed
+ */
+export function groupOf(b, s, now = Date.now()) {
+  if (b.cancelledAt) return "cancelled";
+  if (b.sentAt) return "settled";
+  if (now > Derive.checkInAt(b, s).getTime()) return "past";
+  return Derive.needsAttention(b) ? "attention" : "settled";
+}
+export const GROUPS = Object.freeze(["attention", "past", "settled", "cancelled"]);
 
 export const AUTOMATION = Object.freeze(["before", "allids"]);
 
@@ -99,6 +127,9 @@ export const Derive = {
    * conflict is what a human has to act on.
    */
   status(b) {
+    // Cancelled outranks everything: whatever else is true of this booking,
+    // nobody is arriving.
+    if (b.cancelledAt) return "cancelled";
     if (b.conflict) return "conflict";
     if (b.sentAt) return "sent";
     return Derive.complete(b) ? "ready" : "awaiting";
@@ -131,7 +162,8 @@ export const Derive = {
    * restricted than the guest. Past it the files are deleted anyway, so there
    * would be nothing to replace.
    */
-  documentsEditable: (b, s, now = Date.now()) => now <= Derive.guestLinkExpiresAt(b, s),
+  documentsEditable: (b, s, now = Date.now()) =>
+    !b.cancelledAt && now <= Derive.guestLinkExpiresAt(b, s),
 
   /**
    * Where this booking's email goes.
@@ -170,7 +202,9 @@ export const Derive = {
     // Already sent: never automatically again. A replaced ID makes a resend
     // *owed* (needsResend), but sending someone's passport twice without the
     // host asking is worse than a stale attachment they can see and fix.
-    if (b.conflict || b.sentAt) return false;
+    // Cancelled: nobody is arriving, so nothing is sent — the gate desk must
+    // never be told to expect a guest who cancelled.
+    if (b.cancelledAt || b.conflict || b.sentAt) return false;
     if (b.automation === "allids") return Derive.complete(b);
     if (b.automation === "before") return now >= Derive.scheduledSendAt(b, s);
     return false;

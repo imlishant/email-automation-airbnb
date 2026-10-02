@@ -11,7 +11,7 @@ import { buildServer } from "../src/http/server.js";
 import { COOKIE } from "../src/http/session.js";
 import { newId, nowIso, run, one, query } from "../src/db/client.js";
 import { syncListing } from "../src/jobs/sync.js";
-import { addDays, toDay } from "../../shared/rules.js";
+import { addDays, toDay, Derive } from "../../shared/rules.js";
 import { signIn } from "./fixtures/session.js";
 let acc;   // the signed-in account every row below belongs to
 
@@ -202,9 +202,42 @@ test("a booking that vanishes from the feed is FLAGGED, never deleted", async ()
   assert.equal((await bookings()).length, 2, "it is still there — the host decides, not the feed");
 
   const gone = (await bookings()).find((b) => b.airbnb_code === "HMGONE0002");
-  assert.equal(gone.conflict, 1);
-  assert.match(gone.conflict_reason, /No longer in the Airbnb calendar/);
+  // Marked cancelled, NOT conflicted. A conflict means two reservations want
+  // the same nights and a human must choose; a cancellation needs nobody, and
+  // putting the two under one flag sent the host hunting for a double booking
+  // that did not exist.
+  assert.ok(gone.cancelled_at, "marked cancelled");
+  assert.equal(gone.conflict, 0, "and not flagged as a conflict");
+  assert.equal(gone.conflict_reason, null);
   assert.match((await activity(gone.id))[0].text, /no longer in the Airbnb calendar/i);
+});
+
+test("a cancelled booking that comes back in the feed is live again", async () => {
+  // A feed that drops an entry for one tick, or a guest who rebooks the same
+  // reservation, must not leave the booking marked cancelled for ever.
+  feedBody = calendar([{ uid: "c@airbnb.com", code: "HMBACK0003", from: addDays(today(), 4), to: addDays(today(), 7) }]);
+  await sync();
+  feedBody = calendar([]);
+  await sync();
+  const after = (await bookings()).find((b) => b.airbnb_code === "HMBACK0003");
+  assert.ok(after.cancelled_at, "gone from the feed");
+
+  feedBody = calendar([{ uid: "c@airbnb.com", code: "HMBACK0003", from: addDays(today(), 4), to: addDays(today(), 7) }]);
+  await sync();
+  const back = (await bookings()).find((b) => b.airbnb_code === "HMBACK0003");
+  assert.equal(back.cancelled_at, null, "and live again when it returns");
+  assert.match((await activity(back.id)).map((a) => a.text).join(" | "), /no longer cancelled/i);
+});
+
+test("nothing is ever sent for a cancelled booking", async () => {
+  // The failure this prevents: a gate desk told to expect a guest who
+  // cancelled, with their ID attached.
+  const b = { checkIn: addDays(today(), 1), checkOut: addDays(today(), 3), automation: "allids",
+              people: [{ lead: true, documentType: "Aadhaar" }], cancelledAt: new Date().toISOString() };
+  const times = { checkInTime: "14:00", checkOutTime: "11:00" };
+  assert.equal(Derive.sendDue(b, times), false, "not automatically");
+  assert.equal(Derive.status(b), "cancelled", "and it reads as cancelled, whatever else is true");
+  assert.equal(Derive.documentsEditable(b, times), false, "and no new IDs are taken for it");
 });
 
 test("a disconnected listing is skipped, not treated as a failure", async () => {

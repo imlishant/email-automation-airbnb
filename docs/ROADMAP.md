@@ -326,6 +326,11 @@ environment broke things the test suite could not see.**
       whatever content type a pinger sends.
 - [x] "Send now" reported success even when the send failed.
 - [x] The guest upload page was unreadable on a phone.
-- [ ] **Nothing watches the tick.** If the pinger stops, or every send starts
-      failing, the first sign is a guest held at a gate. Something should say
-      so — a "last successful tick" line on the Bookings page, at minimum.
+- [x] **Nothing watches the tick.** Done 2026-10-02: a health strip on
+      Bookings reports a stale tick, a failing mailbox, an unreadable calendar
+      and an unconnected listing. A real send records its outcome against the
+      mailbox, so a revoked Gmail shows up on the next page load.
+- [x] **A cancelled booking read as "Sync conflict"** and sat at the top of the
+      attention list with no way to clear it (2026-10-02). Cancellation is now
+      its own state, and the list has a `past` group so a gone-by check-in
+      cannot outrank tomorrow's arrival.
