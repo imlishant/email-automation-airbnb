@@ -24,6 +24,11 @@ Security entries are always listed, even when the fix is small.
 
 ### Added
 
+- **A resent email now replies to the first one**, so the society's desk sees
+  one thread per arrival instead of two unrelated emails about the same guests.
+  Every resend still attaches every ID, so whichever message the desk files,
+  they hold the complete set.
+
 - **A motion system**, iOS-flavoured and applied throughout: one set of curves
   and durations as CSS tokens, a presence helper (`frontend/js/motion.js`) so
   everything that appears also visibly disappears, press feedback on buttons,

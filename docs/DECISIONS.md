@@ -616,3 +616,41 @@ near-empty headings competing with tomorrow's arrival. They are now one
 collapsed section — *Past & cancelled (3)* — with each card keeping its own
 pill, so the distinction lives where it is useful. The host asked for exactly
 this: the labelling matters, the two headings did not.
+
+## A resend is a reply, and always carries everything (2026-10-03)
+
+One arrival should be one conversation at the gate desk. A corrected ID used to
+arrive as a second, unrelated email, leaving the desk to work out by hand which
+of the two to file — and the host asked for the obvious fix: thread it.
+
+**We write our own Message-ID.** Mail clients thread on `In-Reply-To` and
+`References`, which means the first email's Message-ID has to be *known*. SMTP
+hands it back, but the Gmail API — the path production actually uses — returns
+its own internal resource id, which no mail client has heard of. Reading the
+sent message back is not an option and never will be: `gmail.send` cannot read
+the mailbox, and that limit is a promise to the host (`docs/SECURITY.md`), not
+an obstacle. So `src/mail/thread.js` generates the id, both transports put it
+in the MIME, and migration 012 remembers it on the booking along with the
+subject as it actually went out (the society's template may be edited in
+between) and Gmail's thread id for the host's own Sent folder.
+
+**The root never moves.** Every resend replies to the *first* email, not to the
+previous resend — `COALESCE` on the thread columns, same pattern as the pinned
+society. A third email therefore sits under the original instead of splitting
+the thread into a staircase.
+
+**Every resend attaches the full set.** This was the host's call, and it is also
+the safer one. Sending only the changed ID produces a shorter email, but it
+breaks a property the whole design leans on: *one email carries the complete
+set*. A desk that files only the newest message would end up holding one ID for
+a three-adult booking, and a guest would be stopped at the gate. One subject,
+one thread, complete attachments every time.
+
+**A booking sent before migration 012** has no stored Message-ID, so its next
+resend goes out standalone rather than failing — and records an anchor, so the
+one after that threads.
+
+**Still open:** `Derive.needsResend` does not fire when an ID is *removed* after
+a send, because it compares the newest upload against `sent_at`. The desk still
+holds that attachment and GatePass says nothing. The fix is to compare the
+document *set* against what was sent; see `docs/ROADMAP.md` item C.

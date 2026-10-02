@@ -54,6 +54,12 @@ async function toRawMessage(message, from) {
     cc: message.cc || undefined,
     replyTo: message.replyTo || undefined,
     subject: message.subject,
+    // Supplied, not generated: Gmail keeps the Message-ID it is given, and a
+    // resend needs to know it to reply into the same thread. The id Gmail
+    // returns is its own resource id and is useless as a mail header.
+    messageId: message.messageId || undefined,
+    inReplyTo: message.inReplyTo || undefined,
+    references: message.references || undefined,
     text: message.body,
     attachments: (message.attachments || []).map((a) => ({
       filename: a.filename, content: a.content, contentType: a.contentType,
@@ -105,7 +111,12 @@ export function gmailApiTransport({ refreshToken, from, clientId, clientSecret, 
         throw err;
       }
       const body = await res.json().catch(() => ({}));
-      return { id: body.id || "gmail", accepted: true, transport: "gmail_api" };
+      // `threadId` is Gmail's, and only makes the host's own Sent folder
+      // thread; what the DESK threads on is the Message-ID we wrote above.
+      return {
+        id: body.id || "gmail", threadId: body.threadId || null,
+        messageId: message.messageId || null, accepted: true, transport: "gmail_api",
+      };
     },
     /** Proves the token still works without sending anything. */
     async verify() {

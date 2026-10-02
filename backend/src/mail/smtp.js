@@ -40,6 +40,12 @@ export function smtpTransport(config) {
         cc: message.cc || undefined,
         replyTo: message.replyTo || replyTo || undefined,
         subject: message.subject,
+        // Threading: we supply the Message-ID so a later resend can reference
+        // it (src/mail/thread.js). nodemailer would otherwise invent one we
+        // never get to keep.
+        messageId: message.messageId || undefined,
+        inReplyTo: message.inReplyTo || undefined,
+        references: message.references || undefined,
         text: message.body,
         attachments: (message.attachments || []).map((a) => ({
           filename: a.filename,
@@ -47,7 +53,7 @@ export function smtpTransport(config) {
           contentType: a.contentType,
         })),
       });
-      return { id: info.messageId, accepted: (info.accepted || []).length > 0, transport: "smtp" };
+      return { id: info.messageId, messageId: info.messageId, accepted: (info.accepted || []).length > 0, transport: "smtp" };
     },
     async verify() {
       const mailer = await get();

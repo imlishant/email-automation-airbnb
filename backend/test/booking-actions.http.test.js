@@ -250,7 +250,7 @@ test("a resend goes to the same address even after the listing moves society", a
   const res = await req("POST", `/api/bookings/${bkg}/send`);
   assert.equal(res.json().resend, true);
   assert.equal(app.mail.sent[1].to, "desk@greenwood.example", "a resend is the same mail to the same desk");
-  assert.match((await activity(bkg))[0].text, /^Resent to desk@greenwood\.example with 1 ID file\(s\)$/);
+  assert.match((await activity(bkg))[0].text, /^Resent in the same thread to desk@greenwood\.example with 1 ID file\(s\)$/);
 });
 
 test("a resend is refused once the ID files have been deleted", async () => {

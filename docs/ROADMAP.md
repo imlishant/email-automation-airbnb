@@ -415,3 +415,101 @@ Tests that matter: a direct booking survives a sync untouched; a direct
 booking overlapping an Airbnb reservation flags a conflict on both; a direct
 booking is editable and deletable while an Airbnb one is refused; the guest
 link, the upload and the send all behave identically.
+
+### C. Resends as a reply — built 2026-10-03
+
+> **Decided by the host, 2026-10-03:** thread it, and resend the *whole* ID set
+> every time. No "which one changed" bookkeeping — "no need to complicate
+> anything". So the threading below is built; the only-what-changed half is
+> deliberately NOT built, and the versioned filenames and explicit roster went
+> with it. The trigger gap (an ID removed after sending) is still open — see
+> the table below.
+
+
+**What triggers "Resend needed" today.** `Derive.needsResend` is true when
+`lastDocumentAt > sentAt` and the files still exist, where `lastDocumentAt` is
+the newest `documents.uploaded_at` on the booking. So:
+
+| event after a send | warning? | why |
+| --- | --- | --- |
+| an ID replaced | **yes** | the upsert refreshes `uploaded_at` |
+| a new ID added (e.g. the adult count went up and the new person uploaded) | **yes** | a new row, with a new `uploaded_at` |
+| the adult count changed, nobody uploaded | **no** | no document changed |
+| **an ID removed after sending** | **no — a gap** | `MAX(uploaded_at)` of the rest is older than the send, so nothing fires, yet the desk still holds that person's attachment |
+
+That last row is a real hole and should be fixed with this work: the trigger
+should be "the set of documents differs from the set that was sent", not "the
+newest upload is newer than the send".
+
+**The idea.** Make a resend a *reply* to the original email so the society's
+desk — and the host's own mailbox — keep one thread per booking, and consider
+attaching only what changed.
+
+**Threading: feasible, and cheap.**
+
+- A reply is just three things: an `In-Reply-To` header, a `References`
+  header, and a `Re:` subject. Both transports can set them —
+  nodemailer directly, and the Gmail API because we build the MIME ourselves.
+- The catch: we do not currently know our own Message-ID. SMTP returns the real
+  one (`info.messageId`), but the Gmail API returns *its* resource id, not the
+  RFC header. **The fix is to generate the Message-ID ourselves** when building
+  the MIME (MailComposer accepts one) — then it is known for both transports,
+  with no extra Google scope, which matters because reading mail is a
+  permission this tool must never hold.
+- Store on the booking (migration): `sent_message_id`, `sent_subject` (the
+  template may change between sends), and Gmail's `sent_thread_id` so the
+  host's own sent folder threads too.
+- Verification step that must not be skipped: send a real test and inspect the
+  **delivered** headers. Gmail is documented to respect a supplied Message-ID
+  on a raw send, but "documented" and "observed" are different things.
+
+**Only-what-changed: feasible, and the risky half.**
+
+Attaching just the new or replaced IDs makes a short, obvious email. It also
+breaks a property the current design leans on: *one email carries the complete
+set*. If a desk files only the newest message — and some will — they end up
+holding one ID for a three-adult booking.
+
+So the recommendation is: **thread the reply, keep attaching the full set by
+default**, and make the body say plainly what changed ("Priya Menon's Aadhaar
+was replaced on 3 Oct; all three IDs are attached again"). A "changed only"
+option can come later if the desks turn out to prefer it — that is their
+working habit, not ours to guess.
+
+Two smaller things to fix in the same pass:
+
+- **Versioned attachment filenames.** A replaced ID arrives with the same
+  filename as the old one, so a desk cannot tell them apart in a folder.
+  `Priya Menon - Aadhaar (updated 3 Oct).jpg`.
+- **The body should carry the roster** — every adult, and whether their ID is
+  attached, previously sent, or still missing. It mostly does; make it explicit
+  for a resend.
+
+**What fails, and the answers.**
+
+1. **Bookings already sent** have no stored Message-ID. The resend must fall
+   back to a standalone email rather than crash, and say so in the activity
+   log.
+2. **Desks whose mail system does not thread** see a `Re:` subject and nothing
+   else changes. No harm; threading is an improvement, not a dependency.
+3. **The host reconnects a different Gmail.** The thread root was sent from the
+   old mailbox, so the recipient still threads (headers) but the host's own
+   sent folder will not. Acceptable, worth a line in the log.
+4. **Repeated resends** accumulate references. Keep the root plus the last one,
+   which is what mail clients actually use.
+5. **At-most-once is unaffected.** The database index still permits exactly one
+   *automatic* send per booking ever; resends are deliberate, manual acts. If
+   automatic resending is ever wanted, that index is the thing to think about
+   first.
+6. **Retention is unaffected** — the stored ids live on the booking row and die
+   with it.
+
+Tests that matter: the delivered message carries `In-Reply-To` and
+`References` matching the first send; a booking with no stored Message-ID still
+resends; a replaced ID produces a distinguishable filename; removing an ID
+after a send now raises "resend needed"; and the body names every adult.
+
+**One question for the host before building:** when a gate desk has already
+been emailed and one ID changes, do they want the whole set again, or only the
+corrected one? The plan assumes the whole set, because a partial latest email
+is the worse failure — but they deal with these desks and may know otherwise.

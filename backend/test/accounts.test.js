@@ -319,3 +319,36 @@ test("a revoked Gmail is reported as needing reconnection, not as a mystery", as
   await assert.rejects(transport.send({ to: "d@e.example", subject: "s", body: "b" }),
     (e) => e.code === "mail_reconnect" && /reconnect/i.test(e.message));
 });
+
+test("the Gmail path puts our own reply headers into the MIME it uploads", async () => {
+  // Why this is tested separately from the SMTP sink: Gmail is the path
+  // production actually uses, and the id Gmail RETURNS is its internal
+  // resource id — useless for threading. The header has to be ours, written
+  // into the raw message, because `gmail.send` cannot read the mailbox back.
+  let raw = null;
+  const fetchImpl = async (url, opts) => {
+    if (String(url).includes("oauth2.googleapis.com/token")) {
+      return new Response(JSON.stringify({ access_token: "at_1", expires_in: 3600 }), { status: 200 });
+    }
+    raw = Buffer.from(JSON.parse(opts.body).raw, "base64url").toString("utf8");
+    return new Response(JSON.stringify({ id: "msg_2", threadId: "thr_9" }), { status: 200 });
+  };
+  const transport = gmailApiTransport({
+    refreshToken: "1//r", from: "host@gmail.com",
+    clientId: "cid", clientSecret: "secret", fetchImpl,
+  });
+  const result = await transport.send({
+    to: "desk@society.example", subject: "Re: Guest IDs - Flat 2", body: "updated ID attached",
+    messageId: "<gatepass.new@gmail.com>",
+    inReplyTo: "<gatepass.root@gmail.com>",
+    references: "<gatepass.root@gmail.com>",
+  });
+
+  assert.match(raw, /^Message-ID: <gatepass\.new@gmail\.com>$/m, "Gmail keeps the id we chose");
+  assert.match(raw, /^In-Reply-To: <gatepass\.root@gmail\.com>$/m);
+  assert.match(raw, /^References: <gatepass\.root@gmail\.com>$/m);
+  assert.match(raw, /^Subject: Re: Guest IDs - Flat 2$/m);
+  // Gmail's own ids are recorded, but the threading never depends on them.
+  assert.equal(result.messageId, "<gatepass.new@gmail.com>");
+  assert.equal(result.threadId, "thr_9");
+});

@@ -16,6 +16,7 @@ import { localStore } from "../src/files/store.js";
 import { encrypt, loadKey } from "../src/files/crypto.js";
 import { addDays, toDay, fillTemplate, DEFAULT_SUBJECT } from "../../shared/rules.js";
 import { signIn } from "./fixtures/session.js";
+import { newMessageId, replySubject, threadHeaders } from "../src/mail/thread.js";
 let acc;   // the signed-in account every row below belongs to
 
 const KEY = randomBytes(32).toString("base64");
@@ -294,4 +295,91 @@ test("a failed send marks the mailbox, so the next page load says so", async () 
   } finally {
     app.mail = good;
   }
+});
+
+// --- resends join the first email's thread --------------------------------
+// The host's reason: one arrival should be one conversation at the gate desk,
+// so a corrected ID is not a second email they have to reconcile by hand.
+test("Message-ID and reply headers are formed the way mail clients expect", () => {
+  const id = newMessageId("host@example.com", () => "abc123");
+  assert.match(id, /^<gatepass\.[a-z0-9]+\.abc123@example\.com>$/,
+    "angle brackets and the sender's own domain, or filters take note");
+  assert.match(newMessageId('"Arjun K." <host@Example.COM>'), /@example\.com>$/);
+  assert.match(newMessageId(""), /@gatepass\.local>$/, "never a malformed header");
+  assert.notEqual(newMessageId("a@b.com"), newMessageId("a@b.com"), "two sends never collide");
+
+  // One "Re:", however many resends.
+  assert.equal(replySubject("Guest IDs - Flat 2"), "Re: Guest IDs - Flat 2");
+  assert.equal(replySubject("Re: Guest IDs - Flat 2"), "Re: Guest IDs - Flat 2");
+  assert.equal(replySubject("RE:  Guest IDs"), "RE:  Guest IDs");
+
+  // A first send carries no reply headers at all.
+  const first = threadHeaders({ from: "h@x.com", root: null, subject: "Guest IDs" });
+  assert.equal(first.inReplyTo, undefined);
+  assert.equal(first.subject, "Guest IDs");
+  // Every resend anchors to the FIRST message, so a third does not dangle off
+  // the second and split the thread.
+  const reply = threadHeaders({ from: "h@x.com", root: "<root@x.com>", subject: "Re: Guest IDs" });
+  assert.equal(reply.inReplyTo, "<root@x.com>");
+  assert.equal(reply.references, "<root@x.com>");
+  assert.equal(reply.subject, "Re: Guest IDs");
+  assert.notEqual(reply.messageId, "<root@x.com>", "a reply is its own message");
+});
+
+test("a resend arrives as a reply to the original, carrying the whole ID set", async () => {
+  await storeDocument(lead);
+  assert.equal((await send()).statusCode, 200);
+  const firstWire = received[0];
+  const messageId = firstWire.match(/^Message-I[Dd]: (<[^>]+>)/m)?.[1];
+  assert.ok(messageId, "the first email must carry a Message-ID we chose");
+  assert.equal((await one(client, "SELECT sent_message_id FROM bookings WHERE id = ?", [bkg])).sent_message_id,
+    messageId, "and it is the one we remembered, byte for byte");
+  assert.doesNotMatch(firstWire, /^In-Reply-To:/m, "the first email replies to nothing");
+
+  // A second adult's ID turns up after the desk was already emailed.
+  const second = newId("per");
+  await run(client, `INSERT INTO people (id,booking_id,name,is_lead,created_at) VALUES (?,?,?,0,?)`,
+    [second, bkg, "Rohit Menon", nowIso()]);
+  await storeDocument(second, { docType: "Passport", contentType: "application/pdf", bytes: Buffer.from("%PDF-1.7\nx") });
+
+  const res = await send();
+  assert.equal(res.statusCode, 200, JSON.stringify(res.json()));
+  assert.equal(res.json().resend, true);
+  assert.equal(received.length, 2);
+  const wire = received[1];
+
+  // The headers that actually do the threading.
+  assert.match(wire, new RegExp(`^In-Reply-To: ${messageId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
+  assert.match(wire, new RegExp(`^References: ${messageId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
+  assert.match(wire, /^Subject: Re: Guest IDs - Sea Breeze 2BHK/m);
+  assert.doesNotMatch(wire, /Subject: Re: Re:/, "one Re:, not a staircase");
+
+  // The decision this encodes: the reply attaches EVERYTHING again, because a
+  // desk that files only the newest email must still hold every guest's ID.
+  assert.equal(res.json().attachments, 2);
+  assert.match(wire, /Priya_Menon_Aadhaar\.jpg/);
+  assert.match(wire, /Rohit_Menon_Passport\.pdf/);
+
+  // The thread's anchor never moves, so a third resend still replies to the
+  // original rather than to the second email.
+  const row = await one(client, "SELECT sent_message_id, sent_subject FROM bookings WHERE id = ?", [bkg]);
+  assert.equal(row.sent_message_id, messageId);
+  assert.match(row.sent_subject, /^Guest IDs - Sea Breeze 2BHK/, "the subject as first sent, without Re:");
+});
+
+test("a booking sent before threading existed resends as a plain email, not an error", async () => {
+  // Rows that predate migration 012 have sent_at and no Message-ID. The desk
+  // loses the threading for that one email; nothing breaks.
+  await storeDocument(lead);
+  await run(client, "UPDATE bookings SET sent_at = ?, sent_to = ?, sent_cc = ? WHERE id = ?",
+    [nowIso(), "desk@greenwood.example", "", bkg]);
+
+  const res = await send();
+  assert.equal(res.statusCode, 200, JSON.stringify(res.json()));
+  assert.equal(res.json().resend, true);
+  const wire = received[received.length - 1];
+  assert.doesNotMatch(wire, /^In-Reply-To:/m, "nothing to reply to, so it does not pretend");
+  assert.match(wire, /^Subject: Guest IDs - Sea Breeze 2BHK/m);
+  // From here on it has an anchor, so the NEXT resend threads.
+  assert.ok((await one(client, "SELECT sent_message_id FROM bookings WHERE id = ?", [bkg])).sent_message_id);
 });

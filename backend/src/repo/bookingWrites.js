@@ -15,6 +15,7 @@ import { Derive, fillTemplate, DEFAULT_SUBJECT } from "../../../shared/rules.js"
 import { buildAttachments, AttachmentsUnavailable } from "../mail/attachments.js";
 import { bookingChanged } from "../events.js";
 import { recordMailCheck } from "../mail/account.js";
+import { threadHeaders } from "../mail/thread.js";
 
 const MAX_ADULTS = 30;
 
@@ -43,6 +44,7 @@ async function loadForRules(client, id) {
     sentAt: row.sent_at || null, conflict: Boolean(row.conflict),
     cancelledAt: row.cancelled_at || null,
     sentTo: row.sent_to || null, sentCc: row.sent_cc || null,
+    sentMessageId: row.sent_message_id || null, sentSubject: row.sent_subject || null,
     people: people.map((p) => ({ id: p.id, name: p.name, lead: Boolean(p.is_lead), documentType: p.doc_type || null, fileRef: p.file_ref, contentType: p.content_type })),
   };
 }
@@ -284,11 +286,24 @@ export async function sendBooking(client, id, transport, { actor = "admin", auto
     .replace(/\s+/g, " ").trim().slice(0, 200)
     || fillTemplate(DEFAULT_SUBJECT, { ...booking, societyName }, (iso) => iso);
 
+  // A resend is a REPLY to the first email about this booking, so the desk
+  // sees one thread per arrival instead of two unrelated emails. The whole ID
+  // set is attached again every time: a desk that files only the newest
+  // message must still end up holding every guest's ID (docs/DECISIONS.md).
+  const thread = threadHeaders({
+    from: mailFrom,
+    root: resend ? booking.sentMessageId : null,
+    subject: resend ? (booking.sentSubject || subject) : subject,
+  });
+
   const message = {
     from: mailFrom,
     to, cc,
-    subject,
+    subject: thread.subject,
     body,
+    messageId: thread.messageId,
+    inReplyTo: thread.inReplyTo,
+    references: thread.references,
     attachments: built.attachments,
     bookingId: id,
   };
@@ -309,12 +324,17 @@ export async function sendBooking(client, id, transport, { actor = "admin", auto
   const at = nowIso();
   await transaction(client, async (tx) => {
     await tx.execute({
-      sql: `UPDATE bookings SET sent_at = ?, sent_to = ?, sent_cc = ?, sent_society_id = COALESCE(sent_society_id, ?), updated_at = ? WHERE id = ?`,
-      args: [at, to, cc, societyId, at, id],
+      // COALESCE on the thread columns for the same reason as the society:
+      // the FIRST send owns the thread, and every resend joins it rather than
+      // starting a new one.
+      sql: `UPDATE bookings SET sent_at = ?, sent_to = ?, sent_cc = ?, sent_society_id = COALESCE(sent_society_id, ?),
+                   sent_message_id = COALESCE(sent_message_id, ?), sent_subject = COALESCE(sent_subject, ?),
+                   sent_thread_id = COALESCE(sent_thread_id, ?), updated_at = ? WHERE id = ?`,
+      args: [at, to, cc, societyId, thread.messageId, thread.subject, delivery?.threadId || null, at, id],
     });
     await logActivity(tx, id, {
       at, kind: "send", actor,
-      text: `${resend ? "Resent" : `Email ${auto ? "auto-" : ""}sent`} to ${to} with ${built.attachments.length} ID file(s)`
+      text: `${resend ? (thread.inReplyTo ? "Resent in the same thread" : "Resent") : `Email ${auto ? "auto-" : ""}sent`} to ${to} with ${built.attachments.length} ID file(s)`
         + (missing.length ? `, ${missing.length} still awaited` : ""),
     });
   });
