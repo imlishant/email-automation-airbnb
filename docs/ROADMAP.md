@@ -334,3 +334,84 @@ environment broke things the test suite could not see.**
       attention list with no way to clear it (2026-10-02). Cancellation is now
       its own state, and the list has a `past` group so a gone-by check-in
       cannot outrank tomorrow's arrival.
+
+## Planned — two items from 2026-10-02, not yet built
+
+### A. (Done 2026-10-02) Cancelled bookings lingered far too long, and the two quiet groups are now one
+
+**The bug.** Everything expires at **checkout + 24h**, measured from the
+booking's own dates (`RULES.purgeRecordAfterCheckoutHours`). That is right for
+a stay that happened. It is wrong for a cancellation: a December booking
+cancelled today keeps its December dates, so it sits in the list **until late
+December**. "Past check-ins" behave sensibly by comparison — a stay that
+started last week and ends Saturday clears on Sunday.
+
+**The fix.**
+
+1. `RULES.purgeCancelledAfterHours = 24`, counted from `cancelled_at`, not
+   from the dates. `Derive.visibleUntil` and `Derive.recordExpiresAt` take the
+   earlier of the two windows when `cancelledAt` is set. The purge job already
+   deletes files before rows, so any ID uploaded before the cancellation goes
+   with it — there is no reason to hold a cancelled guest's passport for
+   three months.
+2. The 24h is a grace period, not politeness: sync lifts the cancellation if
+   the booking reappears, and a feed that drops an entry for one tick must not
+   destroy a real booking.
+3. **Merge the two quiet sections into one**, collapsed, with a count:
+   *"Past & cancelled (3)"*. Each card keeps its own pill, so the distinction
+   survives where it matters — on the card — without two near-empty headings
+   competing with tomorrow's arrival. The host asked for exactly this.
+
+Small: one migration-free rules change, one purge condition, one UI section.
+Tests: a cancelled booking with a far-future checkout purges on the next tick
+after 24h; its ID files go with it; one that reappears within the window
+survives.
+
+### B. Direct bookings — a stay that never came from Airbnb
+
+**What the host wants.** To add a booking taken personally (phone, WhatsApp,
+a returning guest), block those dates on Airbnb by hand, and have GatePass
+treat it like any other stay: guest link, IDs, the email to the gate desk.
+
+**What fails today, in order of severity.**
+
+1. **Sync would cancel it within ten minutes.** The vanished-bookings loop
+   marks anything not present in the feed as cancelled. A manual booking is
+   never in the feed, so it would be cancelled on the next tick and then
+   refuse to send. This is the blocker, and it is why this needs a phase
+   rather than a quick form.
+2. **Overlaps would not be detected.** Conflicts are computed only between
+   reservations *inside the feed*. A direct booking that collides with an
+   Airbnb reservation — exactly the mistake the host is trying to avoid —
+   would pass silently. Overlap detection has to run against stored bookings
+   (Airbnb + direct, excluding cancelled), flagging both sides.
+3. **It has no code.** `airbnb_code` is the identity on screen and fills
+   `{{booking_id}}` in the email. A direct booking needs its own readable
+   reference (`DIRECT-7K2P`), and every place that says "Airbnb booking
+   HM…" needs to say "Direct booking DIRECT-7K2P".
+4. **It must be editable, and Airbnb ones must not be.** Feed-owned bookings
+   are overwritten on the next sync, so editing them is a lie. Direct
+   bookings need dates, adults, guest name and phone editable — and deletable,
+   because the host owns them.
+5. **Copy that assumes Airbnb.** "Auto-syncing from Airbnb", "x new from
+   Airbnb", "Guest not yet identified · phone ends 1234".
+
+**The shape.** A `source` column (`'airbnb' | 'direct'`, default `'airbnb'`),
+a `reference` column for the human-readable code, a "Add a booking" form on
+the Bookings page (listing, dates, adults, name, phone — all optional except
+listing and dates), and a `PATCH`/`DELETE` that refuse on `source = 'airbnb'`.
+Everything downstream — guest links, uploads, sending, retention — already
+works off dates and people, so it needs no change.
+
+**Worth considering at the same time, not instead:** GatePass could publish a
+per-listing **iCal feed of its direct bookings** for Airbnb to *import*, which
+blocks those dates automatically and free. Airbnb polls imported calendars
+periodically rather than instantly, so it is a safety net rather than a
+guarantee — the host should still block manually for same-day bookings. This
+is also the groundwork for the direct-booking idea in
+`../opsdesk/docs/MARKET.md`.
+
+Tests that matter: a direct booking survives a sync untouched; a direct
+booking overlapping an Airbnb reservation flags a conflict on both; a direct
+booking is editable and deletable while an Airbnb one is refused; the guest
+link, the upload and the send all behave identically.

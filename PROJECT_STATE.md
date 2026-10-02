@@ -6,6 +6,7 @@ _Last updated: 2026-10-02 by Claude Code (Opus 5.5), during onboarding — confi
 Live on Render (`gatepass.paletteandpillows.space`), phases 1–5 done. Work now comes from the host backlog and production findings in `docs/ROADMAP.md`.
 
 ## Completed (recent)
+- 2026-10-02: cancellations expire 24h after cancellation (were lingering until their original checkout); "past" and "cancelled" merged into one collapsed section.
 - 2026-10-02: tick health strip on Bookings (stale tick, failing mailbox, unreadable calendar, unconnected listing); cancellation separated from sync conflict, with a `past` group.
 - 2026-09-29: iOS-style motion system made the standard.
 
@@ -17,7 +18,9 @@ Nothing half-done; the working tree was clean at onboarding.
 - Phase 5 leftover: off-Turso nightly backups.
 
 ## Next action
-User picks the next backlog item; agree its scope (each is its own phase), then build it.
+Two items planned on 2026-10-02 and awaiting the go-ahead — see `docs/ROADMAP.md` → *Planned*:
+- **A.** Done 2026-10-02: cancellations expire 24h after the cancellation, files included, and "past" + "cancelled" are one collapsed section.
+- **B.** Next, if the host agrees: Direct bookings (taken outside Airbnb). Blocker: sync would mark them cancelled within ten minutes, and overlaps with Airbnb reservations would go undetected.
 
 ## Gotchas
 - Deployment breaks things tests can't see (see ROADMAP *Found by using it in production*). Verify on the deployed site, not only `npm test`.

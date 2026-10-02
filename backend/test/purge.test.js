@@ -110,3 +110,27 @@ test("running twice is harmless", async () => {
   await purgeExpired(client, { store });
   assert.deepEqual(await purgeExpired(client, { store }), []);
 });
+
+test("a cancelled booking goes 24h after the cancellation, not after its dates", async () => {
+  // The bug this fixes: a December stay cancelled in October kept its December
+  // dates, so it sat in the host's list for three months.
+  const { id, refs } = await booking(addDays(today(), 84), { files: 1 });
+  const cancelledAgo = (h) => run(client, "UPDATE bookings SET cancelled_at = ? WHERE id = ?",
+    [new Date(Date.now() - h * 3600_000).toISOString(), id]);
+
+  // Two hours after the cancellation: still here, because the 24h is a grace
+  // period — sync lifts the cancellation if the booking reappears.
+  await cancelledAgo(2);
+  assert.deepEqual((await findExpired(client)).map((b) => b.id), [], "within the grace period it survives");
+
+  await cancelledAgo(25);
+  assert.deepEqual((await findExpired(client)).map((b) => b.id), [id],
+    "a day later it is gone, months before its checkout");
+
+  // And the bytes go with it: no reason to hold a cancelled guest's passport.
+  assert.ok(await store.get(refs[0]));
+  const res = await purgeExpired(client, { store });
+  assert.equal(res.find((r) => r.booking === id)?.purged, true);
+  assert.equal(await store.get(refs[0]), null, "the file went too");
+  assert.equal(await one(client, "SELECT id FROM bookings WHERE id = ?", [id]), null);
+});

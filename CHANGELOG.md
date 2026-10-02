@@ -59,6 +59,13 @@ Security entries are always listed, even when the fix is small.
 
 ### Fixed
 
+- **A cancelled booking lingered until its original checkout** — a December
+  stay cancelled in October stayed in the list for three months. Cancellations
+  now expire 24h after the cancellation (a grace period, in case the booking
+  reappears in the feed), taking any uploaded ID files with them.
+- **"Past check-ins" and "Cancelled on Airbnb" are one collapsed section**,
+  *Past & cancelled (n)*, each card keeping its own pill.
+
 - **A cancelled booking showed as "Sync conflict"** and could not be cleared.
   Cancellation is now its own state (migration `010_cancelled.sql`, which also
   repairs existing rows): quiet, in its own group, never sent, and lifted

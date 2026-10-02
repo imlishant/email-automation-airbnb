@@ -336,6 +336,16 @@
   .soc .sbody[data-state="closing"]{display:block;animation:m-panel-out var(--dur-exit) var(--ease-in) both}
   .soc .sh .caret{transition:transform var(--dur-enter) var(--ease-out)}
 
+  /* The one collapsed section for stays that are over or were called off. */
+  .group-toggle{display:flex;align-items:center;gap:7px;background:none;border:none;padding:0;
+    margin:26px 0 10px;color:var(--faint);font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+    transition:color var(--dur-micro) var(--ease-out)}
+  .group-toggle:hover{color:var(--muted)}
+  .group-toggle .caret{width:15px;height:15px;stroke:currentColor;transition:transform var(--dur-enter) var(--ease-out)}
+  .group-toggle .caret.up{transform:rotate(180deg)}
+  #quiet[data-state="closing"]{animation:m-panel-out var(--dur-exit) var(--ease-in) both}
+  #quiet:not([hidden]){animation:m-panel-in var(--dur-enter) var(--ease-out) both}
+
   /* The health strip on Bookings: what has quietly stopped working. */
   .health{display:flex;flex-direction:column;gap:8px;margin:0 0 18px}
   .hnote{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:var(--radius-sm);

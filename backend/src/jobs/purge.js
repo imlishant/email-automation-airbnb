@@ -16,15 +16,19 @@ import { listChanged } from "../events.js";
 
 export async function findExpired(client, { now = Date.now() } = {}) {
   const times = await allAccountTimes(client);
-  // SQL narrows to anything whose checkout is at least a day gone; Derive
-  // decides exactly, using that account's own check-out time.
+  // SQL narrows to anything whose checkout is at least a day gone, PLUS
+  // anything cancelled — a cancelled booking is counted from the cancellation,
+  // so its checkout may still be months away and it must not be skipped here.
+  // Derive then decides exactly, using that account's own check-out time.
   const cutoff = addDays(new Date(now).toISOString().slice(0, 10), -1);
   const rows = await query(client, `
-    SELECT b.id, b.airbnb_code, b.check_in, b.check_out, l.account_id
-    FROM bookings b JOIN listings l ON l.id = b.listing_id WHERE b.check_out <= ?`, [cutoff]);
+    SELECT b.id, b.airbnb_code, b.check_in, b.check_out, b.cancelled_at, l.account_id
+    FROM bookings b JOIN listings l ON l.id = b.listing_id
+    WHERE b.check_out <= ? OR b.cancelled_at IS NOT NULL`, [cutoff]);
   return rows.filter((r) => {
     const settings = times.get(r.account_id);
-    return settings && Derive.fullyExpired({ checkIn: r.check_in, checkOut: r.check_out }, settings, now);
+    return settings && Derive.fullyExpired(
+      { checkIn: r.check_in, checkOut: r.check_out, cancelledAt: r.cancelled_at || null }, settings, now);
   });
 }
 

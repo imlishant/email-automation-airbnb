@@ -149,7 +149,7 @@ function mountTheme(host, label) {
 }
 
 // ---------- state ----------
-const view = { screen: "bookings", bookingId: null, listingId: null, tab: "listings", openSoc: null, editListing: null, addSoc: false, mailFlash: null, bookingCode: null };
+const view = { screen: "bookings", bookingId: null, listingId: null, tab: "listings", openSoc: null, editListing: null, addSoc: false, mailFlash: null, bookingCode: null, showQuiet: false };
 const main = document.getElementById("main");
 
 // Every render awaits data, so a second render can start before the first
@@ -247,11 +247,12 @@ async function renderList(seq) {
   const groups = { attention: inGroup("attention"), past: inGroup("past"),
                    settled: inGroup("settled"), cancelled: inGroup("cancelled") };
   const retain = RULES.hideBookingAfterCheckoutHours;
+  const quietCount = groups.past.length + groups.cancelled.length;
 
   main.innerHTML = `
     <div class="page-head">
       <div><h1>Bookings</h1><div class="sub">${page.counts.attention} need your attention · ${page.counts.settled} ready or sent${
-        page.counts.past ? ` · ${page.counts.past} past` : ""}</div></div>
+        quietCount ? ` · ${quietCount} past or cancelled` : ""}</div></div>
       <select class="filter" id="flt" aria-label="Filter by listing">
         <option value="">All listings</option>
         ${listings.map((l) => `<option value="${esc(l.id)}" ${view.listingId === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("")}
@@ -266,12 +267,9 @@ async function renderList(seq) {
     <div class="group-label">Needs your attention</div>
     <div id="attn">${groups.attention.length ? groups.attention.map(cardHTML).join("")
       : `<div class="card"><div class="empty">Nothing waiting. Every upcoming booking has its IDs in.</div></div>`}</div>
-    <div class="group-label" ${groups.past.length ? "" : "hidden"}>Past check-ins &mdash; never sent</div>
-    <div id="past">${groups.past.map(cardHTML).join("")}</div>
     <div class="group-label" ${groups.settled.length ? "" : "hidden"}>Ready &amp; sent</div>
     <div id="settled">${groups.settled.map(cardHTML).join("")}</div>
-    <div class="group-label" ${groups.cancelled.length ? "" : "hidden"}>Cancelled on Airbnb</div>
-    <div id="cancelled">${groups.cancelled.map(cardHTML).join("")}</div>
+    ${quietHTML(groups)}
     <div id="more">${page.nextCursor ? `<button class="btn" id="showmore" data-cursor="${esc(page.nextCursor)}">Show more bookings</button>` : ""}</div>`;
 
   document.getElementById("flt").onchange = (e) => { view.listingId = e.target.value || null; render(); };
@@ -288,8 +286,34 @@ async function renderList(seq) {
     else toast("Checked Airbnb — nothing new");
     render();
   };
+  const quiet = document.getElementById("quietToggle");
+  if (quiet) quiet.onclick = async () => {
+    if (view.showQuiet) await leave(document.getElementById("quiet"));
+    view.showQuiet = !view.showQuiet;
+    render();
+  };
   bindCards(main);
   bindShowMore();
+}
+
+/**
+ * Stays that are over or were called off, folded into one collapsed section.
+ *
+ * They were two headings — "Past check-ins" and "Cancelled on Airbnb" — which
+ * meant two near-empty labels competing with tomorrow's arrival. Each card
+ * keeps its own pill, so the distinction stays where it is useful; the list
+ * stays about what needs doing. Cancelled bookings disappear on their own 24h
+ * after the cancellation (shared/rules.js).
+ */
+function quietHTML(groups) {
+  const rows = [...groups.past, ...groups.cancelled];
+  if (!rows.length) return "";
+  const open = view.showQuiet;
+  return `<button class="group-toggle" id="quietToggle" aria-expanded="${open}">
+      <svg class="caret ${open ? "up" : ""}" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      Past &amp; cancelled (${rows.length})
+    </button>
+    <div id="quiet" ${open ? "" : "hidden"}>${open ? rows.map(cardHTML).join("") : ""}</div>`;
 }
 
 /**
@@ -342,8 +366,13 @@ function bindShowMore() {
     btn.disabled = true;
     const page = await Data.bookings({ listingId: view.listingId, cursor: btn.dataset.cursor });
     page.rows.forEach((b) => {
-      const box = document.getElementById(groupOf(b, page.times) === "attention" ? "attn" : groupOf(b, page.times));
-      (box || document.getElementById("settled")).insertAdjacentHTML("beforeend", cardHTML(b));
+      const g = groupOf(b, page.times);
+      const id = g === "attention" ? "attn" : g === "settled" ? "settled" : "quiet";
+      const box = document.getElementById(id);
+      // The quiet section may be collapsed, in which case its extra rows are
+      // simply not shown until it is opened — the count on the toggle is the
+      // server's, so it stays truthful.
+      if (box) box.insertAdjacentHTML("beforeend", cardHTML(b));
     });
     document.getElementById("more").innerHTML = page.nextCursor
       ? `<button class="btn" id="showmore" data-cursor="${esc(page.nextCursor)}">Show more bookings</button>` : "";

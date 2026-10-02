@@ -587,3 +587,32 @@ list (one query with subqueries — the round-trip budget is three):
 A real send now records its outcome against `account_mail` too, so a revoked
 token is visible on the *next page load* rather than to whoever next presses
 Send.
+
+## A cancellation is counted from the cancellation (2026-10-02)
+
+Every retention window was measured from the booking's own dates, which is
+right for a stay that happened and wrong for one that was called off: a
+December booking cancelled in October kept its December dates and sat in the
+host's list for three months.
+
+`RULES.purgeCancelledAfterHours = 24`, counted from `cancelled_at`.
+`Derive.visibleUntil` and `Derive.recordExpiresAt` now take the **earlier** of
+the two windows, so a cancellation can only ever shorten a booking's life,
+never extend it — a stay that already ended is not kept alive by being
+cancelled late.
+
+The 24 hours is a grace period with a purpose, not politeness: sync lifts the
+cancellation if the booking reappears, and a feed that drops an entry for one
+tick must not destroy a real booking. The purge deletes files before rows as
+always, so a cancelled guest's ID photo goes with the record rather than
+waiting months for a checkout that will never happen.
+
+The purge's SQL narrowing had to widen too (`check_out <= cutoff OR
+cancelled_at IS NOT NULL`): a cancelled booking's checkout may still be months
+away, and the old query would never have shown it to `Derive`.
+
+**One section, not two.** "Past check-ins" and "Cancelled on Airbnb" were two
+near-empty headings competing with tomorrow's arrival. They are now one
+collapsed section — *Past & cancelled (3)* — with each card keeping its own
+pill, so the distinction lives where it is useful. The host asked for exactly
+this: the labelling matters, the two headings did not.

@@ -233,3 +233,29 @@ test("placeholder names are recognised, so stand-ins never reach a security desk
   assert.equal(Derive.unnamedPeople(b).length, 2);
   assert.deepEqual(Derive.unnamedPeople(b).map((p) => p.name), ["Adult 2", "Lead guest"]);
 });
+
+test("a cancellation can only shorten a window, never extend one", () => {
+  const times = { checkInTime: "14:00", checkOutTime: "11:00" };
+  const far = { checkIn: "2026-12-20", checkOut: "2026-12-24" };
+  const now = Date.parse("2026-10-02T12:00:00.000Z");
+
+  // Not cancelled: the December dates govern, as they should.
+  assert.equal(Derive.visible(far, times, now), true);
+  assert.equal(Derive.fullyExpired(far, times, now), false);
+
+  // Cancelled an hour ago: still visible, because the grace period exists so a
+  // feed that drops an entry for one tick cannot destroy a real booking.
+  const justNow = { ...far, cancelledAt: new Date(now - 3600_000).toISOString() };
+  assert.equal(Derive.visible(justNow, times, now), true);
+  assert.equal(Derive.fullyExpired(justNow, times, now), false);
+
+  // Cancelled two days ago: gone, months before its checkout.
+  const old = { ...far, cancelledAt: new Date(now - 48 * 3600_000).toISOString() };
+  assert.equal(Derive.visible(old, times, now), false);
+  assert.equal(Derive.fullyExpired(old, times, now), true);
+
+  // And a stay that already ended is not kept ALIVE by being cancelled late.
+  const past = { checkIn: "2026-09-20", checkOut: "2026-09-23",
+                 cancelledAt: new Date(now - 3600_000).toISOString() };
+  assert.equal(Derive.fullyExpired(past, times, now), true, "the earlier window still wins");
+});

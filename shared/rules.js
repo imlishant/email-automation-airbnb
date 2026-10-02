@@ -33,6 +33,12 @@ export const RULES = Object.freeze({
   // recipient, adult count — no names, no files), not a longer window on the
   // personal data.
   purgeRecordAfterCheckoutHours: 24,
+  // A cancellation is counted from the moment it was noticed, NOT from the
+  // booking's dates: a December stay cancelled in October kept its December
+  // dates and sat in the list for three months. 24h is a grace period with a
+  // purpose — sync lifts the cancellation if the booking reappears, and a feed
+  // that drops an entry for one tick must not destroy a real booking.
+  purgeCancelledAfterHours: 24,
   // The "1 hour before check-in" automation.
   scheduledSendLeadHours: 1,
   // Defaults for a fresh install only; the live values are host settings.
@@ -141,14 +147,26 @@ export const Derive = {
   checkInAt: (b, s = defaultTimes) => atTime(b.checkIn, s.checkInTime),
   checkOutAt: (b, s = defaultTimes) => atTime(b.checkOut, s.checkOutTime),
 
+  /**
+   * When a cancelled booking stops existing: 24h after the cancellation, or
+   * its normal retention instant, whichever comes FIRST. A cancellation can
+   * only ever shorten a window, never extend one.
+   */
+  cancelledExpiresAt: (b) =>
+    b.cancelledAt ? Date.parse(b.cancelledAt) + hours(RULES.purgeCancelledAfterHours) : Infinity,
+
   guestLinkExpiresAt: (b, s) => Derive.checkOutAt(b, s).getTime() + hours(RULES.guestLinkAfterCheckoutHours),
   guestLinkActive: (b, s, now = Date.now()) => now <= Derive.guestLinkExpiresAt(b, s),
-  visibleUntil: (b, s) => Derive.checkOutAt(b, s).getTime() + hours(RULES.hideBookingAfterCheckoutHours),
+  visibleUntil: (b, s) => Math.min(
+    Derive.checkOutAt(b, s).getTime() + hours(RULES.hideBookingAfterCheckoutHours),
+    Derive.cancelledExpiresAt(b)),
   visible: (b, s, now = Date.now()) => now <= Derive.visibleUntil(b, s),
   idFilesDeletedAt: (b, s) => Derive.checkOutAt(b, s).getTime() + hours(RULES.deleteIdFilesAfterCheckoutHours),
   /** Past the file delete there is nothing to attach, so a resend is impossible. */
   canResend: (b, s, now = Date.now()) => now < Derive.idFilesDeletedAt(b, s),
-  recordExpiresAt: (b, s) => Derive.checkOutAt(b, s).getTime() + hours(RULES.purgeRecordAfterCheckoutHours),
+  recordExpiresAt: (b, s) => Math.min(
+    Derive.checkOutAt(b, s).getTime() + hours(RULES.purgeRecordAfterCheckoutHours),
+    Derive.cancelledExpiresAt(b)),
   /** True once every retention window has passed and nothing should remain. */
   fullyExpired: (b, s, now = Date.now()) => now > Derive.recordExpiresAt(b, s),
 
